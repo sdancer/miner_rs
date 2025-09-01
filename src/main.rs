@@ -63,7 +63,7 @@ pub fn test_cpu_cv_vs_gpu_zero() {
 fn main() -> Result<(), DriverError> {
     let start = std::time::Instant::now();
 
-test_cpu_cv_vs_gpu_zero();
+    test_cpu_cv_vs_gpu_zero();
 
     let ptx = compile_ptx(PTX_SRC).unwrap();
     println!("Compilation succeeded in {:?}", start.elapsed());
@@ -109,7 +109,7 @@ test_cpu_cv_vs_gpu_zero();
     unsafe { builder.launch(cfg) }?;
 
     stream.memcpy_dtoh(&state_out, &mut c_host)?;
-    println!("Found {:?} in {:?}", c_host, start.elapsed());
+    println!("Found {:?} in {:?}", hex_lower(&c_host), start.elapsed());
     Ok(())
 }
 
