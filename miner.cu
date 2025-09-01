@@ -176,7 +176,7 @@ __device__ void g_words_from_little_endian_bytes(
     }
 }
 
-extern \"C\" __global__ void matmul(float* A, float* B, float* C, int N) {
+extern "C" __global__ void matmul(float* A, float* B, float* C, int N) {
     int ROW = blockIdx.y*blockDim.y+threadIdx.y;
     int COL = blockIdx.x*blockDim.x+threadIdx.x;
 
