@@ -33,7 +33,7 @@ __constant__ const u32 g_IV[8] = {
     0x510E527F, 0x9B05688C, 0x1F83D9AB, 0x5BE0CD19,
 };
 
-extern "C" __global__ void compress_a(u8* A, u8 * C) {
+extern "C" __global__ void compress(u8* A, u8 * C) {
     int ROW = blockIdx.y*blockDim.y+threadIdx.y;
     int COL = blockIdx.x*blockDim.x+threadIdx.x;
 
