@@ -20,26 +20,22 @@ fn main() -> Result<(), DriverError> {
     println!("Built in {:?}", start.elapsed());
 
     let module = ctx.load_module(ptx)?;
-    let f = module.load_function("matmul")?;
+    let f = module.load_function("hash_one")?;
     println!("Loaded in {:?}", start.elapsed());
 
-    let a_host = [1.0f32, 2.0, 3.0, 4.0];
-    let b_host = [1.0f32, 2.0, 3.0, 4.0];
-    let mut c_host = [0.0f32; 4];
+    let a_host = [0u8; 240];
+    let mut c_host = [0u8; 32];
 
     let a_dev = stream.memcpy_stod(&a_host)?;
-    let b_dev = stream.memcpy_stod(&b_host)?;
     let mut c_dev = stream.memcpy_stod(&c_host)?;
 
     println!("Copied in {:?}", start.elapsed());
 
     let mut builder = stream.launch_builder(&f);
     builder.arg(&a_dev);
-    builder.arg(&b_dev);
     builder.arg(&mut c_dev);
-    builder.arg(&2i32);
     let cfg = LaunchConfig {
-        block_dim: (2, 2, 1),
+        block_dim: (1, 1, 1),
         grid_dim: (1, 1, 1),
         shared_mem_bytes: 0,
     };
@@ -49,3 +45,4 @@ fn main() -> Result<(), DriverError> {
     println!("Found {:?} in {:?}", c_host, start.elapsed());
     Ok(())
 }
+
