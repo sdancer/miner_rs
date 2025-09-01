@@ -4,5 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+arrayref = "0.3.9"
+blake3 = "1.8.2"
 cudarc =  { version = "0.17.3", features = ["cuda-version-from-build-system"] }
 
