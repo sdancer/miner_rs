@@ -78,7 +78,7 @@ fn main() -> Result<(), DriverError> {
 
     let a_host = [0u8; 240];
     let b_host = [0u8; 240];
-    let mut c_host = [0u8; 32];
+    let mut c_host = [0u8; 64];
 
     let chaining_value = stream.memcpy_stod(&a_host)?;
     let block_words = stream.memcpy_stod(&b_host)?;
