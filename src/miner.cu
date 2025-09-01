@@ -104,7 +104,7 @@ __device__ void g_compress(
     g_memcpy(state, chaining_value, 32);
     g_memcpy(state+8, g_IV, 16);
     state[12] = (u32)counter;
-    state[13] = (u32)(counter >> 32);
+    state[13] = (u32)0;
     state[14] = block_len;
     state[15] = flags;
     printf("counter %lx", counter);
