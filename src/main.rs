@@ -1,11 +1,10 @@
 use cudarc::driver::{CudaContext, DriverError, LaunchConfig, PushKernelArg};
-use cudarc::nvrtc::compile_ptx;
 
 const PTX_SRC: &str = include_str!("miner.cu");
 
-use core::mem;
+use cudarc::nvrtc::CompileOptions;
 
-use blake3::platform::{Platform};
+use blake3::platform::Platform;
 
 /// Tiny hex (lowercase) helper without pulling a crate.
 fn hex_lower(data: &[u8]) -> String {
@@ -18,9 +17,9 @@ fn hex_lower(data: &[u8]) -> String {
     s
 }
 
-const BLOCK_LEN : usize = 64;
+const BLOCK_LEN: usize = 64;
 
-use arrayref::{array_mut_ref, array_ref};
+use arrayref::array_mut_ref;
 
 #[inline(always)]
 pub fn le_bytes_from_words_32(words: &[u32; 8]) -> [u8; 32] {
@@ -43,7 +42,7 @@ pub fn test_cpu_cv_vs_gpu_zero() {
     let plat = Platform::detect();
 
     // chaining value: 8×u32 all zeros
-    let cv : CVWords = [0; 8];
+    let cv: CVWords = [0; 8];
 
     // 64-byte block all zeros
     let block: [u8; BLOCK_LEN] = [0u8; BLOCK_LEN];
@@ -57,22 +56,19 @@ pub fn test_cpu_cv_vs_gpu_zero() {
 
     // Print as bytes (LE) for easy GPU-side comparison
     println!("CPU folded CV (32 bytes): {}", hex_lower(&cv_bytes));
-
 }
-use cudarc::nvrtc::{ CompileOptions};
+
 fn main() -> Result<(), DriverError> {
     let start = std::time::Instant::now();
 
     test_cpu_cv_vs_gpu_zero();
-  let opts = CompileOptions {
+
+    let opts = CompileOptions {
         arch: Some("compute_61"),
-        include_paths: vec!["/usr/local/cuda/include".into(),
-        "/opt/cuda/include".into()], // adjust for your install
+        include_paths: vec!["/usr/local/cuda/include".into(), "/opt/cuda/include".into()], // adjust for your install
         ..Default::default()
     };
-    let ptx = cudarc::nvrtc::compile_ptx_with_opts(PTX_SRC,
-opts,
-        ).unwrap();
+    let ptx = cudarc::nvrtc::compile_ptx_with_opts(PTX_SRC, opts).unwrap();
     println!("Compilation succeeded in {:?}", start.elapsed());
 
     let ctx = CudaContext::new(0)?;
@@ -94,13 +90,13 @@ opts,
     println!("Copied in {:?}", start.elapsed());
 
     let mut builder = stream.launch_builder(&f);
-//const u32 *__restrict__ chaining_value,  // cv[8]
-//    const u32 *__restrict__ block_words,     // m[16]
-//    u64 counter,
-//    u32 block_len,
-//    u32 flags,
-//    u32 *__restrict__ state_out)             // writes v[16]
-//{
+    //const u32 *__restrict__ chaining_value,  // cv[8]
+    //    const u32 *__restrict__ block_words,     // m[16]
+    //    u64 counter,
+    //    u32 block_len,
+    //    u32 flags,
+    //    u32 *__restrict__ state_out)             // writes v[16]
+    //{
     builder.arg(&chaining_value);
     builder.arg(&block_words);
     builder.arg(&0);
@@ -119,4 +115,3 @@ opts,
     println!("Found {:?} in {:?}", hex_lower(&c_host), start.elapsed());
     Ok(())
 }
-
