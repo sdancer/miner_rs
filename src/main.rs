@@ -24,16 +24,35 @@ fn main() -> Result<(), DriverError> {
     println!("Loaded in {:?}", start.elapsed());
 
     let a_host = [0u8; 240];
+    let b_host = [0u8; 240];
     let mut c_host = [0u8; 32];
 
-    let a_dev = stream.memcpy_stod(&a_host)?;
-    let mut c_dev = stream.memcpy_stod(&c_host)?;
+    let chaining_value = stream.memcpy_stod(&a_host)?;
+    let block_words = stream.memcpy_stod(&b_host)?;
+    let mut state_out = stream.memcpy_stod(&c_host)?;
 
     println!("Copied in {:?}", start.elapsed());
 
     let mut builder = stream.launch_builder(&f);
-    builder.arg(&a_dev);
-    builder.arg(&mut c_dev);
+//const u32 *__restrict__ chaining_value,  // cv[8]
+//    const u32 *__restrict__ block_words,     // m[16]
+//    u64 counter,
+//    u32 block_len,
+//    u32 flags,
+//    u32 *__restrict__ state_out)             // writes v[16]
+//{
+    builder.arg(&chaining_value);
+    builder.arg(&block_words);
+    builder.arg(&0);
+    builder.arg(&240);
+    builder.arg(&0);
+    builder.arg(&mut state_out);
+
+
+
+
+
+
     let cfg = LaunchConfig {
         block_dim: (1, 1, 1),
         grid_dim: (1, 1, 1),
@@ -41,7 +60,7 @@ fn main() -> Result<(), DriverError> {
     };
     unsafe { builder.launch(cfg) }?;
 
-    stream.memcpy_dtoh(&c_dev, &mut c_host)?;
+    stream.memcpy_dtoh(&state_out, &mut c_host)?;
     println!("Found {:?} in {:?}", c_host, start.elapsed());
     Ok(())
 }
