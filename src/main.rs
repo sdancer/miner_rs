@@ -1,7 +1,7 @@
 use cudarc::driver::{CudaContext, DriverError, LaunchConfig, PushKernelArg};
 use cudarc::nvrtc::compile_ptx;
 
-const PTX_SRC: &str = include_str!("../miner.cu");
+const PTX_SRC: &str = include_str!("miner.cu");
 
 fn main() -> Result<(), DriverError> {
     let start = std::time::Instant::now();
