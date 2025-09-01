@@ -227,12 +227,12 @@ __device__ void g_words_from_little_endian_bytes(
     }
 }
 
-extern "C" __global__ void compress(uint8 * A, uint8 * C) {
+extern "C" __global__ void compress(uint8* A, uint8* C) {
     int ROW = blockIdx.y*blockDim.y+threadIdx.y;
     int COL = blockIdx.x*blockDim.x+threadIdx.x;
 
     if (ROW == 0 && COL == 0) {
-     printf("got called\n");
+      //printf("got called\n");
  
     }
 }
