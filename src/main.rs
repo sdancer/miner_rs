@@ -51,7 +51,7 @@ pub fn test_cpu_cv_vs_gpu_zero() {
     // match GPU params
     let counter: u64 = 0;
     let flags: u8 = 0;
-    let block_len: u8 = 64; // IMPORTANT: 64, not 241
+    let block_len: u8 = 64;
 
     plat.compress_in_place(&mut cv, &block, block_len, counter, flags);
 
