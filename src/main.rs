@@ -20,7 +20,7 @@ fn main() -> Result<(), DriverError> {
     println!("Built in {:?}", start.elapsed());
 
     let module = ctx.load_module(ptx)?;
-    let f = module.load_function("hash_one")?;
+    let f = module.load_function("compress")?;
     println!("Loaded in {:?}", start.elapsed());
 
     let a_host = [0u8; 240];
