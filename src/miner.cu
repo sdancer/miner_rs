@@ -199,7 +199,7 @@ extern "C" __global__ void compress(
     int COL = blockIdx.x*blockDim.x+threadIdx.x;
 
     if (ROW == 0 && COL == 0) {
-      g_compress(chaining_value, block_words, counter, block_len, flags, state_out);
+      g_compress(chaining_value, block_words, counter & 0xffffffff, block_len, flags, state_out);
       printf("got called %lx\n",state_out[0]);
     }
 }
