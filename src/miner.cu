@@ -107,6 +107,7 @@ __device__ void g_compress(
     state[13] = (u32)(counter >> 32);
     state[14] = block_len;
     state[15] = flags;
+    printf("counter %lx", counter);
 
     u32 block[16];
     g_memcpy(block, block_words, 64);

@@ -43,7 +43,7 @@ pub fn test_cpu_cv_vs_gpu_zero() {
     let plat = Platform::detect();
 
     // chaining value: 8×u32 all zeros
-    let mut cv : CVWords = [0; 8];
+    let cv : CVWords = [0; 8];
 
     // 64-byte block all zeros
     let block: [u8; BLOCK_LEN] = [0u8; BLOCK_LEN];
@@ -53,14 +53,11 @@ pub fn test_cpu_cv_vs_gpu_zero() {
     let flags: u8 = 0;
     let block_len: u8 = 64;
 
-    plat.compress_in_place(&mut cv, &block, block_len, counter, flags);
+    let cv_bytes = plat.compress_xof(&cv, &block, block_len, counter, flags);
 
     // Print as bytes (LE) for easy GPU-side comparison
-    let cv_bytes = le_bytes_from_words_32(&cv);
     println!("CPU folded CV (32 bytes): {}", hex_lower(&cv_bytes));
 
-    // Also print words
-    println!("CPU folded CV words (u32 LE): {:08x?}", cv);
 }
 
 fn main() -> Result<(), DriverError> {
@@ -69,12 +66,6 @@ fn main() -> Result<(), DriverError> {
 test_cpu_cv_vs_gpu_zero();
 
     let ptx = compile_ptx(PTX_SRC).unwrap();
-    //let program = nvrtc::Program::new("default_program", src);
-    //let compile_options = [
-    //    "-I/usr/local/cuda/include", // CUDA headers
-    //    "-I/usr/include",            // system headers, adjust if needed
-    //];
-    //program.compile(&compile_options)?;
     println!("Compilation succeeded in {:?}", start.elapsed());
 
     let ctx = CudaContext::new(0)?;
