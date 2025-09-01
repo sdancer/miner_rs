@@ -33,27 +33,6 @@ __constant__ const u32 g_IV[8] = {
     0x510E527F, 0x9B05688C, 0x1F83D9AB, 0x5BE0CD19,
 };
 
-// custom memcpy, apparently cuda's memcpy is slow 
-// when called within a kernel
-__device__ void g_memcpy(u32 *lhs, const u32 *rhs, int size) {
-    // assuming u32 is 4 bytes
-    int len = size / 4;
-    for(int i=0; i<len; i++)
-        lhs[i] = rhs[i];
-}
-
-// custom memset
-template<typename T, typename ptr_t>
-__device__ void g_memset(ptr_t dest, T val, int count) {
-    for(int i=0; i<count; i++)
-        dest[i] = val;
-}
-
-__constant__ const int g_MSG_PERMUTATION[] = {
-    2, 6, 3, 10, 7, 0, 4, 13, 
-    1, 11, 12, 5, 9, 14, 15, 8
-};
-
 __device__ __forceinline__ uint32_t g_rotr32(uint32_t v, int s) {
     return (v >> s) | (v << (32 - s));
 }
