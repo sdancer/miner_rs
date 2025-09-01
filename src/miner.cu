@@ -147,7 +147,7 @@ extern "C" __global__ void compress(
 
     if (ROW == 0 && COL == 0) {
       g_compress(chaining_value, block_words, counter, block_len, flags, state_out);
-      printf("got called\n");
+      printf("got called %lx\n",state_out[0]);
     }
 }
 
