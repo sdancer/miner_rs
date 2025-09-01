@@ -44,14 +44,9 @@ fn main() -> Result<(), DriverError> {
     builder.arg(&chaining_value);
     builder.arg(&block_words);
     builder.arg(&0);
-    builder.arg(&240);
+    builder.arg(&241);
     builder.arg(&0);
     builder.arg(&mut state_out);
-
-
-
-
-
 
     let cfg = LaunchConfig {
         block_dim: (1, 1, 1),
