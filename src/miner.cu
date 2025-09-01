@@ -1,30 +1,35 @@
+#include <sm_61_intrinsics.h>
+
 typedef unsigned long long uint64_t;
 typedef unsigned int  uint32_t;
 typedef unsigned char uint8_t;
+
+typedef signed int  int32_t;
+typedef signed char int8_t;
 
 using u32 = uint32_t;
 using u64 = uint64_t;
 using u8  = uint8_t;
  
-const u32 OUT_LEN = 32;
-const u32 KEY_LEN = 32;
-const u32 BLOCK_LEN = 64;
-const u32 CHUNK_LEN = 1024;
-// Multiple chunks make a snicker bar :)
-const u32 SNICKER = 1U << 10;
-// Factory height and snicker size have an inversly propotional relationship
-// FACTORY_HT * (log2 SNICKER) + 10 >= 64 
-const u32 FACTORY_HT = 5;
-
-const u32 CHUNK_START = 1 << 0;
+//const u32 OUT_LEN = 32;
+//const u32 KEY_LEN = 32;
+//const u32 BLOCK_LEN = 64;
+//const u32 CHUNK_LEN = 1024;
+//// Multiple chunks make a snicker bar :)
+//const u32 SNICKER = 1U << 10;
+//// Factory height and snicker size have an inversly propotional relationship
+//// FACTORY_HT * (log2 SNICKER) + 10 >= 64 
+//const u32 FACTORY_HT = 5;
+//
+//const u32 CHUNK_START = 1 << 0;
 const u32 CHUNK_END = 1 << 1;
-const u32 PARENT = 1 << 2;
+//const u32 PARENT = 1 << 2;
 const u32 ROOT = 1 << 3;
-const u32 KEYED_HASH = 1 << 4;
-const u32 DERIVE_KEY_CONTEXT = 1 << 5;
-const u32 DERIVE_KEY_MATERIAL = 1 << 6;
+//const u32 KEYED_HASH = 1 << 4;
+//const u32 DERIVE_KEY_CONTEXT = 1 << 5;
+//const u32 DERIVE_KEY_MATERIAL = 1 << 6;
 
-const int usize = sizeof(u32) * 8;
+//const int usize = sizeof(u32) * 8;
 
 // redefine functions, but for the GPU
 // all of them are the same but with g_ prefixed
@@ -176,7 +181,147 @@ extern "C" __global__ void compress(
 
     if (ROW == 0 && COL == 0) {
       g_compress(chaining_value, block_words, counter & 0xffffffff, block_len, flags, state_out);
-      printf("got called %lx\n",state_out[0]);
+ //     printf("got called %lx\n",state_out[0]);
     }
+}
+
+// --- Emit one 64B XOF block into 16 u32 words (dstw)
+__device__ inline void xof_emit_words(
+    u32 blk,
+    const u32 root[8],
+    const u32 precv[8],
+    const u32 last_words[16],
+    u32 last_len,
+    u32 dstw[16])
+{
+    u32 out[16];
+
+    const uint64_t t = (uint64_t)blk;
+
+    const u32 flags = (CHUNK_END | ROOT);
+    // g_compress writes 16 words to state; its low half is already lo^hi (root CV),
+    // high half is the raw hi (no feed-forward).
+    g_compress(precv, const_cast<u32*>(last_words), t, last_len, flags, out);
+
+    #pragma unroll
+    for (int w=0; w<8; ++w) dstw[w] = out[w];
+
+    #pragma unroll
+    for (int w=0; w<8; ++w) dstw[8+w] = out[8+w] ^ precv[w];
+}
+
+#ifndef TILE_K
+#define TILE_K 256  // multiple of 64 and 4
+#endif
+
+__global__ void matmul16x50240_u8_i8_dp4a_fused_xof(
+    const u32* __restrict__ d_roots,
+    const u32* __restrict__ d_precv,
+    const u32* __restrict__ d_last_words,
+    int32_t * __restrict__ d_C,
+    int batch)
+{
+    const int i    = threadIdx.y;  // 0..15
+    const int j    = threadIdx.x;  // 0..15
+    const int seed = blockIdx.x;
+    if (seed >= batch || i >= 16 || j >= 16) return;
+
+    const u32* root   = d_roots      + (size_t)seed * 8;
+    const u32* precv  = d_precv      + (size_t)seed * 8;
+    const u32* lwords = d_last_words + (size_t)seed * 16;
+    //last len is always constant
+    const u32  llen   = 48; //d_last_len[seed];
+
+    constexpr int K = 50240;
+    constexpr int A_BYTES = 16 * K;    // 803,840
+    constexpr int A_BLOCKS = A_BYTES / 64; // 12,560
+    constexpr int B_BASE_BLOCK = A_BLOCKS; // 12,560
+
+    extern __shared__ __align__(16) uint8_t smem[];
+    uint8_t* As = smem;                             // 16*TILE_K bytes
+    uint8_t* Bs = smem + (size_t)16 * TILE_K;       // TILE_K*16 bytes
+
+    int acc   = 0;
+    int sum_b = 0;
+
+    for (int k0 = 0; k0 < K; k0 += TILE_K) {
+        const int tile = min(TILE_K, K - k0);
+
+        const int a_blocks_per_row = (tile + 63) / 64;
+        for (int ri = i; ri < 16; ri += blockDim.y) {
+            for (int rb = j; rb < a_blocks_per_row; rb += blockDim.x) {
+                const int kk_base = rb * 64;
+                const uint32_t blkA = (uint32_t)(ri * (K/64) + (k0/64) + rb);
+                u32 words[16];
+                xof_emit_words(blkA, root, precv, lwords, llen, words);
+
+                uint8_t* dst = As + (size_t)ri * TILE_K + kk_base;
+                u32* dstw = reinterpret_cast<u32*>(dst);
+                #pragma unroll
+                for (int w=0; w<16; ++w) dstw[w] = words[w];
+            }
+        }
+
+        const int b_blocks = (tile + 3) / 4;
+        const int tlin     = threadIdx.y * blockDim.x + threadIdx.x;  // 0..255
+        const int tstride  = blockDim.x * blockDim.y;                  // 256
+        for (int gb = tlin; gb < b_blocks; gb += tstride) {
+            const int kk_base   = gb * 4; // four consecutive k
+            const uint32_t blkB = (uint32_t)(B_BASE_BLOCK + ((k0 + kk_base) >> 2));
+            u32 words[16];
+            xof_emit_words(blkB, root, precv, lwords, llen, words);
+        
+            // scatter 64B into Bs rows: four chunks of 16B
+            const uint32_t* srcw = reinterpret_cast<const uint32_t*>(words);
+            #pragma unroll
+            for (int q = 0; q < 4; ++q) {
+                const int kk = kk_base + q;
+                if (kk < tile) {
+                    uint32_t* dstw = reinterpret_cast<uint32_t*>(Bs + (size_t)kk * 16);
+                    dstw[0] = srcw[q*4 + 0];
+                    dstw[1] = srcw[q*4 + 1];
+                    dstw[2] = srcw[q*4 + 2];
+                    dstw[3] = srcw[q*4 + 3];
+                }
+            }
+        }
+        __syncthreads();
+
+        int kk = 0;
+        for (; kk + 3 < tile; kk += 4) {
+            int a0 = (int)((unsigned)As[(size_t)i*TILE_K + kk + 0]) - 128;
+            int a1 = (int)((unsigned)As[(size_t)i*TILE_K + kk + 1]) - 128;
+            int a2 = (int)((unsigned)As[(size_t)i*TILE_K + kk + 2]) - 128;
+            int a3 = (int)((unsigned)As[(size_t)i*TILE_K + kk + 3]) - 128;
+            int a_packed =  (a0 & 0xFF)
+                          | ((a1 & 0xFF) << 8)
+                          | ((a2 & 0xFF) << 16)
+                          | ((a3 & 0xFF) << 24);
+
+            int b0 = (int)((int8_t)Bs[(size_t)(kk + 0) * 16 + j]);
+            int b1 = (int)((int8_t)Bs[(size_t)(kk + 1) * 16 + j]);
+            int b2 = (int)((int8_t)Bs[(size_t)(kk + 2) * 16 + j]);
+            int b3 = (int)((int8_t)Bs[(size_t)(kk + 3) * 16 + j]);
+            int b_packed =  (b0 & 0xFF)
+                          | ((b1 & 0xFF) << 8)
+                          | ((b2 & 0xFF) << 16)
+                          | ((b3 & 0xFF) << 24);
+
+            sum_b += b0 + b1 + b2 + b3;
+            acc = __dp4a(a_packed, b_packed, acc);
+        }
+        for (; kk < tile; ++kk) {
+            int a_s = (int)((unsigned)As[(size_t)i*TILE_K + kk]) - 128;
+            int b_s = (int)((int8_t)Bs[(size_t)kk * 16 + j]);
+            acc   += a_s * b_s;
+            sum_b += b_s;
+        }
+
+        __syncthreads();
+    }
+
+    acc += 128 * sum_b;
+
+    d_C[(size_t)seed * 256 + (size_t)i * 16 + j] = acc;
 }
 

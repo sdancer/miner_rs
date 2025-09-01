@@ -59,13 +59,20 @@ pub fn test_cpu_cv_vs_gpu_zero() {
     println!("CPU folded CV (32 bytes): {}", hex_lower(&cv_bytes));
 
 }
-
+use cudarc::nvrtc::{ CompileOptions};
 fn main() -> Result<(), DriverError> {
     let start = std::time::Instant::now();
 
     test_cpu_cv_vs_gpu_zero();
-
-    let ptx = compile_ptx(PTX_SRC).unwrap();
+  let opts = CompileOptions {
+        arch: Some("compute_61"),
+        include_paths: vec!["/usr/local/cuda/include".into(),
+        "/opt/cuda/include".into()], // adjust for your install
+        ..Default::default()
+    };
+    let ptx = cudarc::nvrtc::compile_ptx_with_opts(PTX_SRC,
+opts,
+        ).unwrap();
     println!("Compilation succeeded in {:?}", start.elapsed());
 
     let ctx = CudaContext::new(0)?;
