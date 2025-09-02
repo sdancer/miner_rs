@@ -40,7 +40,7 @@ __constant__ const u32 g_IV[8] = {
 };
 
 
-#ifdef NEWGCOMP
+#ifndef NEWGCOMP
 __device__ __forceinline__ uint32_t g_rotr32(uint32_t v, int s) {
     return (v >> s) | (v << (32 - s));
 }
@@ -575,12 +575,12 @@ void solve_nonce_range_fused(
         __syncthreads();
 
 
-        //if (i == 0 && j == 0 && seed == 0) {
-        //    for (int a = 0; a < 64; a++) {
-        //   d_hashes[a] = tileC[a];
-        //    }
-        //}
-        //__syncthreads();
+        if (i == 0 && j == 0 && seed == 0) {
+            for (int a = 0; a < 64; a++) {
+           d_hashes[a] = tileC[a];
+            }
+        }
+        __syncthreads();
 
 
         // Hash the 1024 bytes (16 × 64B blocks) → write 32B per seed
