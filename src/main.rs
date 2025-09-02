@@ -110,7 +110,7 @@ fn main() -> Result<(), DriverError> {
 
     // Nonce range: start=0, count=1 (single seed)
     let nonce_start: u64 = 0;
-    let nonce_count: i32 = 1;
+    let nonce_count: i32 = 100000;
 
     println!("Copied in {:?}", start.elapsed());
 
