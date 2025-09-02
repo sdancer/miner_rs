@@ -76,42 +76,51 @@ fn main() -> Result<(), DriverError> {
     println!("Built in {:?}", start.elapsed());
 
     let module = ctx.load_module(ptx)?;
-    let f = module.load_function("compress")?;
+    let f = module.load_function("solve_nonce_range_fused")?;
     println!("Loaded in {:?}", start.elapsed());
 
-    let a_host = [0u8; 240];
-    let b_host = [0u8; 240];
-    let mut c_host = [0u8; 64];
+    // --- Inputs/outputs ---
+    // Prefix is 232 bytes (common), kernel appends 8B LE nonce at [232..239]
+    let prefix_host = [0u8; 232];
+    let d_prefix = stream.memcpy_stod(&prefix_host)?;
 
-    let chaining_value = stream.memcpy_stod(&a_host)?;
-    let block_words = stream.memcpy_stod(&b_host)?;
-    let mut state_out = stream.memcpy_stod(&c_host)?;
+    // Output is a single 16x16 i32 matrix = 256 i32
+    let mut out_host = [0i32; 256];
+    let mut d_out = stream.memcpy_stod(&out_host)?;
+
+    // Nonce range: start=0, count=1 (single seed)
+    let nonce_start: u64 = 0;
+    let nonce_count: i32 = 1;
 
     println!("Copied in {:?}", start.elapsed());
 
-    let mut builder = stream.launch_builder(&f);
-    //const u32 *__restrict__ chaining_value,  // cv[8]
-    //    const u32 *__restrict__ block_words,     // m[16]
-    //    u64 counter,
-    //    u32 block_len,
-    //    u32 flags,
-    //    u32 *__restrict__ state_out)             // writes v[16]
-    //{
-    builder.arg(&chaining_value);
-    builder.arg(&block_words);
-    builder.arg(&0);
-    builder.arg(&64);
-    builder.arg(&0);
-    builder.arg(&mut state_out);
-
+    // --- Launch config ---
+    // Kernel expects block (16,16,1), grid (>=1 blocks). One block = one seed here.
     let cfg = LaunchConfig {
-        block_dim: (1, 1, 1),
+        block_dim: (16, 16, 1),
         grid_dim: (1, 1, 1),
-        shared_mem_bytes: 0,
+        // TILE_K = 256 in the kernel → shared = 16*TILE_K + TILE_K*16 bytes = 8192
+        shared_mem_bytes: (16 * 256 + 256 * 16) as u32,
     };
-    unsafe { builder.launch(cfg) }?;
 
-    stream.memcpy_dtoh(&state_out, &mut c_host)?;
-    println!("Found {:?} in {:?}", hex_lower(&c_host), start.elapsed());
+    // --- Build args & launch ---
+    let mut builder = stream.launch_builder(&f);
+    // solve_nonce_range_fused(
+    //   const u8* d_prefix232, u64 nonce_start, int nonce_count, int32_t* d_C)
+    builder.arg(&d_prefix);
+    builder.arg(&nonce_start);
+    builder.arg(&nonce_count);
+    builder.arg(&mut d_out);
+
+    unsafe { builder.launch(cfg) }?;
+    stream.synchronize()?;
+
+    // --- Copy back & print 16x16 result ---
+    stream.memcpy_dtoh(&d_out, &mut out_host)?;
+    println!("Result (16x16 i32):");
+    for r in 0..16 {
+        println!("{:?}", &out_host[r * 16..(r + 1) * 16]);
+    }
+    println!("Done in {:?}", start.elapsed());
     Ok(())
 }
