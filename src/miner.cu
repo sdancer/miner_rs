@@ -380,9 +380,17 @@ void compute_root_from_seed240(const uint8_t* __restrict__ seed240,
 #endif
 
 
-// --- helpers (top of file or above the kernel) ---
+
+// Simple cp.async wrapper: copy 16B from gmem to smem (assumes aligned)
+__device__ __forceinline__ void cp_async_16(void* smem_ptr, const void* gmem_ptr) {
+    unsigned smem = static_cast<unsigned>(__cvta_generic_to_shared(smem_ptr));          // 32-bit
+    unsigned long long gmem = (unsigned long long)__cvta_generic_to_global(gmem_ptr);   // 64-bit
+    asm volatile("cp.async.ca.shared.global [%0], [%1], 16;\n" :: "r"(smem), "l"(gmem));
+}
+
+
+// ====== helpers (place near the top, reuse your g_compress/xof helpers) ======
 __device__ __forceinline__ int pack4_sub128(uint8_t b0, uint8_t b1, uint8_t b2, uint8_t b3) {
-    // Pack 4 bytes into signed i8 lanes (A path): (u8 - 128)
     char4 v;
     v.x = (char)((int)b0 - 128);
     v.y = (char)((int)b1 - 128);
@@ -392,185 +400,163 @@ __device__ __forceinline__ int pack4_sub128(uint8_t b0, uint8_t b1, uint8_t b2, 
 }
 
 __device__ __forceinline__ int pack4_i8(uint8_t b0, uint8_t b1, uint8_t b2, uint8_t b3) {
-    // Pack 4 bytes into signed i8 lanes (B path): (already i8)
-    char4 v;
-    v.x = (char)b0;
-    v.y = (char)b1;
-    v.z = (char)b2;
-    v.w = (char)b3;
+    char4 v; v.x = (char)b0; v.y = (char)b1; v.z = (char)b2; v.w = (char)b3;
     return *reinterpret_cast<int*>(&v);
 }
 
+#define TILE_K 1024   // 4090: 32*TILE_K bytes of smem; 1024 => 32 KiB per block (comfortable)
+
+// ================================== KERNEL ===================================
 extern "C" __global__
-__launch_bounds__(256, 4)
-void solve_nonce_range_fused(
+__launch_bounds__(256, 2)
+void solve_nonce_range_fused_dp4a(
         const uint8_t* __restrict__ d_prefix232, // 232 bytes
         unsigned long long* d_iter_count,
         u64 nonce_start,
         int nonce_count,
-        u32* __restrict__ d_hashes /* (still unused; hashing kept commented) */)
+        u32* __restrict__ d_hashes /* optional: debug slot */)
 {
     const int i = threadIdx.y;   // 0..15
     const int j = threadIdx.x;   // 0..15
+    if (i >= 16 || j >= 16) return;
 
-    // ---- Static small shared (persists across tile iters) ----
+    // ---- Small shared state (persists across tiles) ----
     __shared__ uint8_t sh_prefix[232];
     __shared__ uint8_t sh_seed[240];
     __shared__ u32 sh_root[8];
     __shared__ u32 sh_precv[8];
     __shared__ u32 sh_lwords[16];
-    __shared__ uint8_t sh_llen; // = 48
+    __shared__ uint8_t sh_llen; // 48 for the 4th block of 240B
 
+    // Optional: keep C tile in shared (useful if you hash on-chip again)
     __shared__ int32_t tileC[16 * 16];
 
-    // Copy common 232B prefix once per block
     if (i == 0 && j == 0) {
         #pragma unroll
         for (int t = 0; t < 232; ++t) sh_prefix[t] = d_prefix232[t];
     }
     __syncthreads();
 
-    // ---- Dynamic shared ----
-    // We will store prepacked A and B (int32 = 4 bytes×4 lanes) here.
+    // ---- Dynamic shared (A_packed + small pad + B_packed) ----
+    // Each pack is int32 where lanes are 4×int8.
     extern __shared__ __align__(16) uint8_t smem[];
-    // Layout: [A_packed (16 rows × TILE_K/4 ints)] [PAD] [B_packed (TILE_K/4 groups × 16 cols ints)]
-    // Use a small pad to reduce bank conflicts between the two regions.
-    int32_t* As4 = reinterpret_cast<int32_t*>(smem);
-    int32_t* Bs4 = reinterpret_cast<int32_t*>(smem + (size_t)16 * (TILE_K/4) * sizeof(int32_t) + 64);
+    int32_t* As4 = reinterpret_cast<int32_t*>(smem);                                     // [16 rows][TILE_K/4]
+    int32_t* Bs4 = reinterpret_cast<int32_t*>(smem + (size_t)16 * (TILE_K/4) * 4 + 64);  // [TILE_K/4 groups][16 cols]
 
-    // Process many nonces with a single persistent block
+    constexpr int K            = 50240;
+    constexpr int A_BYTES      = 16 * K;           // 803,840
+    constexpr int A_BLOCKS     = A_BYTES / 64;     // 12,560
+    constexpr int B_BASE_BLOCK = A_BLOCKS;         // 12,560
+
+    const int strideA = (TILE_K >> 2);   // int32 per row
+    const int strideB = 16;              // int32 per k-group: one per column
+
+    const int thread_id     = threadIdx.y * blockDim.x + threadIdx.x; // 0..255
+    const int total_threads = blockDim.x * blockDim.y;
+
     for (int seed = blockIdx.x; seed < nonce_count; seed += gridDim.x) {
+        if (i == 0 && j == 0) atomicAdd(d_iter_count, 1ULL);
 
-        // Thread (0,0) builds the 240B seed and computes root/preCV/lastWords
+        // Build seed & derive xof params once per seed
         if (i == 0 && j == 0) {
-            atomicAdd(d_iter_count, 1ULL);
-
             #pragma unroll
             for (int t = 0; t < 232; ++t) sh_seed[t] = sh_prefix[t];
-
             const u64 nonce = nonce_start + (u64)seed;
-            store_le64(&sh_seed[232], nonce);
+            #pragma unroll
+            for (int b = 0; b < 8; ++b) sh_seed[232 + b] = (uint8_t)(nonce >> (8*b));
 
             compute_root_from_seed240(sh_seed, sh_root, sh_precv, sh_lwords, &sh_llen);
         }
         __syncthreads();
 
-        constexpr int K            = 50240;
-        constexpr int A_BYTES      = 16 * K;           // 803,840
-        constexpr int A_BLOCKS     = A_BYTES / 64;     // 12,560
-        constexpr int B_BASE_BLOCK = A_BLOCKS;         // 12,560
-        const u32     llen         = (u32)sh_llen;
-
         int acc   = 0;
-        int sum_b = 0;
-
-        const int thread_id     = threadIdx.y * blockDim.x + threadIdx.x; // 0..255
-        const int total_threads = blockDim.x * blockDim.y;                 // 256
+        int sum_b = 0;                 // we’ll add (sum_b << 7) at the end
+        const u32 llen = (u32)sh_llen;
 
         for (int k0 = 0; k0 < K; k0 += TILE_K) {
-            const int tile    = min(TILE_K, K - k0);
-            const int groups  = (tile + 3) >> 2;        // number of 4-byte DP4A groups
-            const int strideA = (TILE_K >> 2);          // ints per row
-            const int strideB = 16;                     // ints per group (one per column)
+            const int tile   = min(TILE_K, K - k0);
+            const int groups = (tile + 3) >> 2;  // # of 4-k packs
 
-            // =========================================================================
-            // 1) Produce & PRE-PACK A: (16 rows × tile) → (16 rows × groups) int32
-            //    We XOF in 64-byte blocks, each block → 16 ints (each packs 4 bytes).
-            // =========================================================================
+            // -------------------- 1) PRE-PACK A (u8->i8, bias once) --------------------
+            // A row r: produce (tile bytes) via XOF in 64B chunks → write as int32 packs.
             const int a_blocks_per_row = (tile + 63) / 64;
-
-            for (int linear_idx = thread_id; linear_idx < 16 * a_blocks_per_row; linear_idx += total_threads) {
-                const int ri      = linear_idx / a_blocks_per_row;  // row 0..15
-                const int rb      = linear_idx % a_blocks_per_row;  // 64B block index within the row
+            for (int lin = thread_id; lin < 16 * a_blocks_per_row; lin += total_threads) {
+                const int r       = lin / a_blocks_per_row;      // 0..15
+                const int rb      = lin % a_blocks_per_row;      // 64B-block within row
                 const int kk_base = rb * 64;
+                if (kk_base >= tile) continue;
 
-                if (kk_base < tile) {
-                    const uint32_t blkA = (uint32_t)(ri * (K/64) + (k0/64) + rb);
+                u32 words[16];
+                const uint32_t blkA = (uint32_t)(r * (K/64) + (k0/64) + rb);
+                xof_emit_words(blkA, sh_root, sh_precv, sh_lwords, llen, words);
+                const uint8_t* w = reinterpret_cast<const uint8_t*>(words);
 
-                    u32 words[16];
-                    xof_emit_words(blkA, sh_root, sh_precv, sh_lwords, llen, words);
-                    const uint8_t* w = reinterpret_cast<const uint8_t*>(words);
+                #pragma unroll
+                for (int q = 0; q < 16; ++q) {
+                    const int gidx = (kk_base >> 2) + q;
+                    if (gidx >= groups) break;
 
-                    // 16 packed ints per 64B block
-                    #pragma unroll
-                    for (int q = 0; q < 16; ++q) {
-                        const int gidx = (kk_base >> 2) + q;   // which 4-byte group along k
-                        if (gidx < groups) {
-                            // Handle tail: pad past tile with zeros
-                            const int byte0_k = kk_base + 4*q + 0;
-                            const int byte1_k = kk_base + 4*q + 1;
-                            const int byte2_k = kk_base + 4*q + 2;
-                            const int byte3_k = kk_base + 4*q + 3;
+                    // guard tail per byte
+                    const int b0k = kk_base + 4*q + 0;
+                    const int b1k = kk_base + 4*q + 1;
+                    const int b2k = kk_base + 4*q + 2;
+                    const int b3k = kk_base + 4*q + 3;
 
-                            uint8_t b0 = (byte0_k < tile) ? w[4*q + 0] : 0;
-                            uint8_t b1 = (byte1_k < tile) ? w[4*q + 1] : 0;
-                            uint8_t b2 = (byte2_k < tile) ? w[4*q + 2] : 0;
-                            uint8_t b3 = (byte3_k < tile) ? w[4*q + 3] : 0;
+                    uint8_t b0 = (b0k < tile) ? w[4*q + 0] : 0;
+                    uint8_t b1 = (b1k < tile) ? w[4*q + 1] : 0;
+                    uint8_t b2 = (b2k < tile) ? w[4*q + 2] : 0;
+                    uint8_t b3 = (b3k < tile) ? w[4*q + 3] : 0;
 
-                            As4[ri * strideA + gidx] = pack4_sub128(b0, b1, b2, b3);
-                        }
-                    }
+                    As4[r * strideA + gidx] = pack4_sub128(b0, b1, b2, b3);
                 }
             }
 
-            // =========================================================================
-            // 2) Produce & PRE-PACK B: (tile × 16) but store as groups along k for each col j
-            //    For each group (kk..kk+3), pack B[kk..kk+3][j] into one int32.
-            // =========================================================================
+            // -------------------- 2) PRE-PACK B (transpose+pack by k-groups) -----------
             for (int gb = thread_id; gb < groups; gb += total_threads) {
                 const int kk_base = gb * 4;
                 const uint32_t blkB = (uint32_t)(B_BASE_BLOCK + ((k0 + kk_base) >> 2));
-
                 u32 words[16];
                 xof_emit_words(blkB, sh_root, sh_precv, sh_lwords, llen, words);
                 const uint8_t* w = reinterpret_cast<const uint8_t*>(words);
-                // w layout: 4 consecutive 16-byte “columns” for kk, kk+1, kk+2, kk+3:
-                // [ j0..j15 | j0..j15 | j0..j15 | j0..j15 ]
 
+                // 64B is 4 “rows” of 16 bytes each → kk, kk+1, kk+2, kk+3
                 #pragma unroll
                 for (int jj = 0; jj < 16; ++jj) {
-                    const int k0_ok = (kk_base + 0) < tile;
-                    const int k1_ok = (kk_base + 1) < tile;
-                    const int k2_ok = (kk_base + 2) < tile;
-                    const int k3_ok = (kk_base + 3) < tile;
+                    const bool k0ok = (kk_base + 0) < tile;
+                    const bool k1ok = (kk_base + 1) < tile;
+                    const bool k2ok = (kk_base + 2) < tile;
+                    const bool k3ok = (kk_base + 3) < tile;
 
-                    uint8_t b0 = k0_ok ? w[0*16 + jj] : 0;
-                    uint8_t b1 = k1_ok ? w[1*16 + jj] : 0;
-                    uint8_t b2 = k2_ok ? w[2*16 + jj] : 0;
-                    uint8_t b3 = k3_ok ? w[3*16 + jj] : 0;
+                    uint8_t b0 = k0ok ? w[0*16 + jj] : 0;
+                    uint8_t b1 = k1ok ? w[1*16 + jj] : 0;
+                    uint8_t b2 = k2ok ? w[2*16 + jj] : 0;
+                    uint8_t b3 = k3ok ? w[3*16 + jj] : 0;
 
                     Bs4[gb * strideB + jj] = pack4_i8(b0, b1, b2, b3);
                 }
             }
-
             __syncthreads();
 
-            // =========================================================================
-            // 3) Compute:  One DP4A per 4-k group. Also sum_b via DP4A with 0x01010101.
-            // =========================================================================
+            // -------------------- 3) COMPUTE (pure DP4A) ------------------------------
             const int ONES = 0x01010101;
+            #pragma unroll 1
             for (int g = 0; g < groups; ++g) {
                 const int a_p = As4[i * strideA + g];
                 const int b_p = Bs4[g * strideB + j];
-
-                acc   = __dp4a(a_p, b_p, acc);         // 4 MACs
-                sum_b = __dp4a(ONES, b_p, sum_b);      // sum of 4 int8s in one op
+                acc   = __dp4a(a_p, b_p, acc);      // 4 MACs
+                sum_b = __dp4a(ONES, b_p, sum_b);   // sum 4 int8s in one op
             }
-
             __syncthreads();
         }
 
-        // Undo A bias: (A_u8 - 128) * b  =>  add back 128 * sum_b
+        // Undo A’s (-128) bias: add 128 * sum_b
         acc += (sum_b << 7);
 
         tileC[i * 16 + j] = acc;
-
         __syncthreads();
-        if (i == 0 && j == 0 && seed == 0) {
-            for (int g = 0; g < 64; ++g) {
-              d_hashes[g] = (u32)tileC[g];
-            }
-        }
+
+        // tiny debug write to prove life
+        if (i == 0 && j == 0 && seed == 0 && d_hashes) d_hashes[0] = (u32)tileC[0];
     }
 }
 
