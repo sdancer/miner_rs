@@ -62,6 +62,9 @@ pub fn test_cpu_cv_vs_gpu_zero() {
 fn main() -> Result<(), DriverError> {
     let seed = [0u8; 240];
 
+    let start = std::time::Instant::now();
+
+
     // 1) Just show first 32 elements of the matmul (as before)
     let x = cpu_ref::calculate_matmul(&seed); // Vec<i32>
     println!("matmul seed 0: {:?}", &x[..32]);
