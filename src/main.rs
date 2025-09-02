@@ -59,6 +59,8 @@ pub fn test_cpu_cv_vs_gpu_zero() {
     println!("CPU folded CV (32 bytes): {}", hex_lower(&cv_bytes));
 }
 
+use cudarc::nvrtc::Ptx;
+
 fn main() -> Result<(), DriverError> {
     let seed = [0u8; 240];
 
@@ -79,6 +81,7 @@ fn main() -> Result<(), DriverError> {
     let h = blake3::hash(&buf);
     println!("seed||matmul BLAKE3 = {}", h.to_hex());
 
+    /*
     let opts = CompileOptions {
         arch: Some("compute_61"),
         include_paths: vec!["/usr/local/cuda/include".into(), "/opt/cuda/include".into()],
@@ -86,12 +89,15 @@ fn main() -> Result<(), DriverError> {
     };
     let ptx = cudarc::nvrtc::compile_ptx_with_opts(PTX_SRC, opts).unwrap();
     println!("Compilation succeeded in {:?}", start.elapsed());
+    */
 
     let ctx = CudaContext::new(0)?;
     let stream = ctx.default_stream();
     println!("Built in {:?}", start.elapsed());
 
-    let module = ctx.load_module(ptx)?;
+
+    // let module = ctx.load_module(ptx)?;
+    let module = ctx.load_module(Ptx::from_file("./miner.cubin"))?;
     let f = module.load_function("solve_nonce_range_fused")?;
 
     println!("Loaded in {:?}", start.elapsed());
