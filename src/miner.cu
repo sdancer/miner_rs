@@ -409,7 +409,7 @@ __device__ __forceinline__ int pack4_i8(uint8_t b0, uint8_t b1, uint8_t b2, uint
 // ================================== KERNEL ===================================
 extern "C" __global__
 __launch_bounds__(256, 2)
-void solve_nonce_range_fused_dp4a(
+void solve_nonce_range_fused(
         const uint8_t* __restrict__ d_prefix232, // 232 bytes
         unsigned long long* d_iter_count,
         u64 nonce_start,
