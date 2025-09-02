@@ -89,7 +89,7 @@ fn main() -> Result<(), DriverError> {
     let d_prefix = stream.memcpy_stod(&prefix_host)?;
 
     // Output is a single 16x16 i32 matrix = 256 i32
-    let mut out_host = [0i32; 1024];
+    let mut out_host = [0i32; 256];
     let mut d_out = stream.memcpy_stod(&out_host)?;
 
     // Nonce range: start=0, count=1 (single seed)
