@@ -388,7 +388,6 @@ void fused_blake3_hash_and_detect(
     uint64_t seed_n
 )
 {
-    const int idx = blockIdx.x * blockDim.x + threadIdx.x;
     const int i = threadIdx.y;   // 0..15
     const int j = threadIdx.x;   // 0..15
     if (i == 0 && j == 0) {} else {
@@ -396,7 +395,7 @@ void fused_blake3_hash_and_detect(
     }
  
     const uint8_t* seed = d_seeds;
-    const uint8_t* Cb   = reinterpret_cast<const uint8_t*>(d_C + (size_t)idx * 256);
+    const uint8_t* Cb   = reinterpret_cast<const uint8_t*>(d_C);
 
     // ---- chunk 0 (1024B): seed[0..239] ++ Cb[0..783] ----
     u32 cv0[8];
@@ -510,15 +509,12 @@ void fused_blake3_hash_and_detect(
     // FUSION: Immediately check for solution without writing to global memory
     const uint8_t* h = reinterpret_cast<const uint8_t*>(final_hash);
     if ((h[0] == 0x00) && (h[1] == 0x00) && ((h[2] & 0xF0) == 0x00)) {
-        //int old = atomicCAS(d_found_idx, -1, idx);
-        //if (old == -1) {
             // OPTIMIZATION: Vectorized nonce extraction (direct 64-bit load)
             const uint64_t* nonce_ptr = reinterpret_cast<const uint64_t*>(seed + 232);
             *d_found_nonce = *nonce_ptr;
 
             const uint32_t* p228 = reinterpret_cast<const uint32_t*>(seed + 228);
             *d_found_u32_at_228 = *p228;
-        //}
     }
 }
 
@@ -717,13 +713,13 @@ void solve_nonce_range_fused(
         u64 d_found_nonce;
         u32 d_found_u32_at_228;
 
-        //fused_blake3_hash_and_detect(
-        //        sh_seed, 
-        //        tileC,
-        //        &d_found_nonce,
-        //        &d_found_u32_at_228,
-        //        seed
-        //        );
+        fused_blake3_hash_and_detect(
+                sh_seed, 
+                tileC,
+                &d_found_nonce,
+                &d_found_u32_at_228,
+                seed
+                );
     }
 }
 
