@@ -142,7 +142,6 @@ __device__ __forceinline__ void g_compress(
     s0  ^= s8;   s1  ^= s9;   s2  ^= s10;  s3  ^= s11;
     s4  ^= s12;  s5  ^= s13;  s6  ^= s14;  s7  ^= s15;
 
-
     // ---- Write out ----
     state_out[0]=s0;  state_out[1]=s1;   state_out[2]=s2;   state_out[3]=s3;
     state_out[4]=s4;  state_out[5]=s5;   state_out[6]=s6;   state_out[7]=s7;
@@ -293,7 +292,7 @@ __device__ inline void xof_emit_words(
 {
     u32 out[16];
 
-    const uint64_t t = (uint64_t)blk;
+    const u32 t = blk;
     //printf("blk: %x\n", blk);
 
     const u32 flags = (CHUNK_END | ROOT);
@@ -486,7 +485,7 @@ void solve_nonce_range_fused(
                     const uint32_t blkA = (uint32_t)(ri * (K/64) + (k0/64) + rb);
 
                     u32 words[16];
-                    xof_emit_words(blkA, sh_root, sh_precv, sh_lwords, llen, words);
+                    //xof_emit_words(blkA, sh_root, sh_precv, sh_lwords, llen, words);
                     const uint8_t* w = reinterpret_cast<const uint8_t*>(words);
 
                     // 16 packed ints per 64B block
@@ -520,7 +519,7 @@ void solve_nonce_range_fused(
                 const uint32_t blkB = (uint32_t)(B_BASE_BLOCK + ((k0 + kk_base) >> 2));
 
                 u32 words[16];
-                xof_emit_words(blkB, sh_root, sh_precv, sh_lwords, llen, words);
+                //xof_emit_words(blkB, sh_root, sh_precv, sh_lwords, llen, words);
                 const uint8_t* w = reinterpret_cast<const uint8_t*>(words);
                 // w layout: 4 consecutive 16-byte “columns” for kk, kk+1, kk+2, kk+3:
                 // [ j0..j15 | j0..j15 | j0..j15 | j0..j15 ]
