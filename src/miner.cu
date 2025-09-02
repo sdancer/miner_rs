@@ -399,7 +399,6 @@ void compute_root_from_seed240(const uint8_t* __restrict__ seed240,
 
                                                 
 extern "C" __global__
-__launch_bounds__(256, 4)
 void solve_nonce_range_fused(
         const uint8_t* __restrict__ d_prefix232, // 232 bytes
         unsigned long long* d_iter_count,
