@@ -40,7 +40,7 @@ __constant__ const u32 g_IV[8] = {
 };
 
 
-#ifndef NEWGCOMP
+#ifdef NEWGCOMP
 __device__ __forceinline__ uint32_t g_rotr32(uint32_t v, int s) {
     return (v >> s) | (v << (32 - s));
 }
