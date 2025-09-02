@@ -584,7 +584,9 @@ void solve_nonce_range_fused(
 
         __syncthreads();
         if (i == 0 && j == 0 && seed == 0) {
-            d_hashes[0] = (u32)tileC[0];
+            for (int g = 0; g < 64; ++g) {
+              d_hashes[g] = (u32)tileC[g];
+            }
         }
     }
 }
