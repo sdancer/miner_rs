@@ -352,6 +352,8 @@ void solve_nonce_range_fused(const uint8_t* __restrict__ d_prefix232, // 232 byt
           }
         __syncthreads();
 
+        return;
+
         // --- Matmul 16xK by Kx16 with on-the-fly XOF using sh_root/sh_precv/sh_lwords ---
         constexpr int K = 50240;
         constexpr int A_BYTES       = 16 * K;

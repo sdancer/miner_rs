@@ -62,7 +62,7 @@ pub fn test_cpu_cv_vs_gpu_zero() {
 fn main() -> Result<(), DriverError> {
 
     let x = cpu_ref::calculate_matmul(&[0u8;240]);
-    println!("matmul seed 0: {:?}", x);
+    println!("matmul seed 0: {:?}", &x[..32]);
  
 
     let start = std::time::Instant::now();
