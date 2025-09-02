@@ -438,7 +438,7 @@ void solve_nonce_range_fused(
         // Thread (0,0) builds the 240B seed and computes root/preCV/lastWords
         if (i == 0 && j == 0) {
 
-             atomicAdd(d_iter_count, 1ULL);
+            atomicAdd(d_iter_count, 1ULL);
             // seed = prefix[0..231] || nonce_le[8]
             #pragma unroll
             for (int t = 0; t < 232; ++t) sh_seed[t] = sh_prefix[t];
@@ -446,7 +446,7 @@ void solve_nonce_range_fused(
             //printf("using nonce %lx\n", nonce);
             store_le64(&sh_seed[232], nonce);
 
-            compute_root_from_seed240(sh_seed, sh_root, sh_precv, sh_lwords, &sh_llen);
+            //compute_root_from_seed240(sh_seed, sh_root, sh_precv, sh_lwords, &sh_llen);
 
             //printf("llen: %d\n", sh_llen);
             //for (int m = 0; m < 8; m++) {
