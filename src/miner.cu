@@ -332,6 +332,22 @@ void solve_nonce_range_fused(const uint8_t* __restrict__ d_prefix232, // 232 byt
                  printf("%lx ", sh_precv[m]);
             }
             printf("\n");
+   for (uint32_t blk = 0; blk < 2; ++blk) {
+                    u32 words[16];
+                    xof_emit_words(blk, sh_root, sh_precv, sh_lwords, (u32)sh_llen, words);
+                    // Print as 64 hex bytes
+                    printf("XOF blk %u: ", blk);
+                    #pragma unroll
+                    for (int w = 0; w < 16; ++w) {
+                        u32 v = words[w];
+                        unsigned b0 = (v >> 0)  & 0xFF;
+                        unsigned b1 = (v >> 8)  & 0xFF;
+                        unsigned b2 = (v >> 16) & 0xFF;
+                        unsigned b3 = (v >> 24) & 0xFF;
+                        printf("%02x%02x%02x%02x", b0, b1, b2, b3);
+                    }
+                    printf("\n");
+                }
           }
         __syncthreads();
 
