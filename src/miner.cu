@@ -14,7 +14,8 @@ using u8  = uint8_t;
 
 //const u32 OUT_LEN = 32;
 //const u32 KEY_LEN = 32;
-//const u32 BLOCK_LEN = 64;
+const u32 BLOCK_LEN = 64;
+const u32 SEED_SIZE = 240;
 //const u32 CHUNK_LEN = 1024;
 //// Multiple chunks make a snicker bar :)
 //const u32 SNICKER = 1U << 10;
@@ -24,7 +25,7 @@ using u8  = uint8_t;
 //
 const u32 CHUNK_START = 1 << 0;
 const u32 CHUNK_END = 1 << 1;
-//const u32 PARENT = 1 << 2;
+const u32 PARENT = 1 << 2;
 const u32 ROOT = 1 << 3;
 //const u32 KEYED_HASH = 1 << 4;
 //const u32 DERIVE_KEY_CONTEXT = 1 << 5;
@@ -377,6 +378,151 @@ void compute_root_from_seed240(const uint8_t* __restrict__ seed240,
 #endif
 
 
+__global__
+// OPTIMIZATION: Let compiler choose optimal occupancy for Blake3 kernel
+void fused_blake3_hash_and_detect(
+    const uint8_t* __restrict__ d_seeds,   // 240B per item
+    const int32_t* __restrict__ d_C,       // 256 i32 (1024B) per item
+    uint64_t*  __restrict__ d_found_nonce,      
+    uint32_t*  __restrict__ d_found_u32_at_228,
+    uint64_t seed_n
+)
+{
+    const int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    const int i = threadIdx.y;   // 0..15
+    const int j = threadIdx.x;   // 0..15
+    if (i == 0 && j == 0) {} else {
+        return;
+    }
+ 
+    const uint8_t* seed = d_seeds;
+    const uint8_t* Cb   = reinterpret_cast<const uint8_t*>(d_C + (size_t)idx * 256);
+
+    // ---- chunk 0 (1024B): seed[0..239] ++ Cb[0..783] ----
+    u32 cv0[8];
+    #pragma unroll
+    for (int w=0; w<8; ++w) cv0[w] = g_IV[w];
+    {
+        u32 state[16];
+        for (int blk=0; blk<16; ++blk) {
+            u32 m[16] = {0};
+            uint8_t* m_bytes = reinterpret_cast<uint8_t*>(m);
+
+            // OPTIMIZATION: Vectorized memory operations for 64-byte blocks
+            const int base_off = blk * 64;
+
+            // Process in 16-byte chunks using uint4 vectorization
+            #pragma unroll
+            for (int chunk = 0; chunk < 4; ++chunk) {
+                const int chunk_off = base_off + chunk * 16;
+                uint4 data;
+
+                if (chunk_off + 16 <= SEED_SIZE) {
+                    // Fully within seed data - vectorized load
+                    data = *reinterpret_cast<const uint4*>(seed + chunk_off);
+                } else if (chunk_off >= SEED_SIZE) {
+                    // Fully within Cb data - vectorized load
+                    data = *reinterpret_cast<const uint4*>(Cb + (chunk_off - SEED_SIZE));
+                } else {
+                    // Boundary case - byte-by-byte (rare)
+                    uint8_t temp[16];
+                    #pragma unroll
+                    for (int i = 0; i < 16; ++i) {
+                        const int off = chunk_off + i;
+                        temp[i] = (off < SEED_SIZE) ? seed[off] : Cb[off - SEED_SIZE];
+                    }
+                    data = *reinterpret_cast<const uint4*>(temp);
+                }
+
+                // Vectorized store
+                *reinterpret_cast<uint4*>(m_bytes + chunk * 16) = data;
+            }
+            u32 flags = 0;
+            if (blk == 0)  flags |= CHUNK_START;
+            if (blk == 15) flags |= CHUNK_END;
+            g_compress(cv0, m, /*t=*/0ULL, /*block_len=*/BLOCK_LEN, flags, state);
+            #pragma unroll
+            for (int w=0; w<8; ++w) cv0[w] = state[w];
+        }
+    }
+
+    // ---- chunk 1 (240B): Cb[784..1023] ----
+    u32 cv1[8];
+    #pragma unroll
+    for (int w=0; w<8; ++w) cv1[w] = g_IV[w];
+    {
+        u32 state[16];
+        for (int blk=0; blk<4; ++blk) {
+            const u32 blen = (blk == 3) ? 48u : 64u;
+            u32 m[16] = {0};
+            uint8_t* m_bytes = reinterpret_cast<uint8_t*>(m);
+            const uint8_t* src = Cb + 784 + blk * 64;
+
+            // OPTIMIZATION: Vectorized memory operations for chunk 1
+            if (blen == 64u) {
+                // Full 64-byte block - use 4x uint4 vectorized loads
+                #pragma unroll
+                for (int chunk = 0; chunk < 4; ++chunk) {
+                    uint4 data = *reinterpret_cast<const uint4*>(src + chunk * 16);
+                    *reinterpret_cast<uint4*>(m_bytes + chunk * 16) = data;
+                }
+            } else {
+                // 48-byte block (last block) - use 3x uint4 + scalar
+                #pragma unroll
+                for (int chunk = 0; chunk < 3; ++chunk) {
+                    uint4 data = *reinterpret_cast<const uint4*>(src + chunk * 16);
+                    *reinterpret_cast<uint4*>(m_bytes + chunk * 16) = data;
+                }
+            }
+            u32 flags = 0;
+            if (blk == 0) flags |= CHUNK_START;
+            if (blk == 3) flags |= CHUNK_END;
+            g_compress(cv1, m, /*t=*/1ULL, blen, flags, state);
+            #pragma unroll
+            for (int w=0; w<8; ++w) cv1[w] = state[w];
+        }
+    }
+
+    // ---- parent combine (ROOT) of the two leaf CVs ----
+    u32 final_hash[8];
+    {
+        u32 parent_in[16];
+        // OPTIMIZATION: Vectorized CV copying using uint4
+        *reinterpret_cast<uint4*>(parent_in) = *reinterpret_cast<const uint4*>(cv0);
+        *reinterpret_cast<uint4*>(parent_in + 4) = *reinterpret_cast<const uint4*>(cv0 + 4);
+        *reinterpret_cast<uint4*>(parent_in + 8) = *reinterpret_cast<const uint4*>(cv1);
+        *reinterpret_cast<uint4*>(parent_in + 12) = *reinterpret_cast<const uint4*>(cv1 + 4);
+
+        u32 cv[8];
+        // OPTIMIZATION: Vectorized IV initialization
+        *reinterpret_cast<uint4*>(cv) = *reinterpret_cast<const uint4*>(g_IV);
+        *reinterpret_cast<uint4*>(cv + 4) = *reinterpret_cast<const uint4*>(g_IV + 4);
+
+        u32 st[16];
+        g_compress(cv, parent_in, /*t=*/0ULL, /*block_len=*/BLOCK_LEN,
+                   /*flags=*/PARENT | ROOT, st);
+
+        // OPTIMIZATION: Vectorized final hash copying
+        *reinterpret_cast<uint4*>(final_hash) = *reinterpret_cast<const uint4*>(st);
+        *reinterpret_cast<uint4*>(final_hash + 4) = *reinterpret_cast<const uint4*>(st + 4);
+    }
+
+    // FUSION: Immediately check for solution without writing to global memory
+    const uint8_t* h = reinterpret_cast<const uint8_t*>(final_hash);
+    if ((h[0] == 0x00) && (h[1] == 0x00) && ((h[2] & 0xF0) == 0x00)) {
+        //int old = atomicCAS(d_found_idx, -1, idx);
+        //if (old == -1) {
+            // OPTIMIZATION: Vectorized nonce extraction (direct 64-bit load)
+            const uint64_t* nonce_ptr = reinterpret_cast<const uint64_t*>(seed + 232);
+            *d_found_nonce = *nonce_ptr;
+
+            const uint32_t* p228 = reinterpret_cast<const uint32_t*>(seed + 228);
+            *d_found_u32_at_228 = *p228;
+        //}
+    }
+}
+
+
 // --- helpers (top of file or above the kernel) ---
 __device__ __forceinline__ int pack4_sub128(uint8_t b0, uint8_t b1, uint8_t b2, uint8_t b3) {
     // Pack 4 bytes into signed i8 lanes (A path): (u8 - 128)
@@ -568,6 +714,17 @@ void solve_nonce_range_fused(
               d_hashes[g] = (u32)tileC[g];
             }
         }
+        u64 d_found_nonce;
+        u32 d_found_u32_at_228;
+
+        fused_blake3_hash_and_detect(
+                sh_seed, 
+                tileC,
+                &d_found_nonce,
+                &d_found_u32_at_228,
+                seed
+                );
     }
 }
+
 
