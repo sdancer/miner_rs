@@ -488,7 +488,7 @@ void solve_nonce_range_fused(
 
                 u32 words[16];
                 const uint32_t blkA = (uint32_t)(r * (K/64) + (k0/64) + rb);
-                //xof_emit_words(blkA, sh_root, sh_precv, sh_lwords, llen, words);
+                xof_emit_words(blkA, sh_root, sh_precv, sh_lwords, llen, words);
                 const uint8_t* w = reinterpret_cast<const uint8_t*>(words);
 
                 #pragma unroll
@@ -516,7 +516,7 @@ void solve_nonce_range_fused(
                 const int kk_base = gb * 4;
                 const uint32_t blkB = (uint32_t)(B_BASE_BLOCK + ((k0 + kk_base) >> 2));
                 u32 words[16];
-                //xof_emit_words(blkB, sh_root, sh_precv, sh_lwords, llen, words);
+                xof_emit_words(blkB, sh_root, sh_precv, sh_lwords, llen, words);
                 const uint8_t* w = reinterpret_cast<const uint8_t*>(words);
 
                 // 64B is 4 “rows” of 16 bytes each → kk, kk+1, kk+2, kk+3
