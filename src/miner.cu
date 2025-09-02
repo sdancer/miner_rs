@@ -397,6 +397,27 @@ void compute_root_from_seed240(const uint8_t* __restrict__ seed240,
 #endif
 
 
+// --- helpers (top of file or above the kernel) ---
+__device__ __forceinline__ int pack4_sub128(uint8_t b0, uint8_t b1, uint8_t b2, uint8_t b3) {
+    // Pack 4 bytes into signed i8 lanes (A path): (u8 - 128)
+    char4 v;
+    v.x = (char)((int)b0 - 128);
+    v.y = (char)((int)b1 - 128);
+    v.z = (char)((int)b2 - 128);
+    v.w = (char)((int)b3 - 128);
+    return *reinterpret_cast<int*>(&v);
+}
+
+__device__ __forceinline__ int pack4_i8(uint8_t b0, uint8_t b1, uint8_t b2, uint8_t b3) {
+    // Pack 4 bytes into signed i8 lanes (B path): (already i8)
+    char4 v;
+    v.x = (char)b0;
+    v.y = (char)b1;
+    v.z = (char)b2;
+    v.w = (char)b3;
+    return *reinterpret_cast<int*>(&v);
+}
+
 extern "C" __global__
 __launch_bounds__(256, 4)
 void solve_nonce_range_fused(
@@ -417,42 +438,40 @@ void solve_nonce_range_fused(
     __shared__ u32 sh_lwords[16];
     __shared__ uint8_t sh_llen; // = 48
 
-    // Each seed’s 16x16 accumulators (1024B) to be hashed on-chip (kept for later)
     __shared__ int32_t tileC[16 * 16];
 
-    // Copy the common 232B prefix once per block
+    // Copy common 232B prefix once per block
     if (i == 0 && j == 0) {
         #pragma unroll
         for (int t = 0; t < 232; ++t) sh_prefix[t] = d_prefix232[t];
     }
     __syncthreads();
 
-    // ---- Dynamic shared for tiles (matches your matmul kernel) ----
+    // ---- Dynamic shared ----
+    // We will store prepacked A and B (int32 = 4 bytes×4 lanes) here.
     extern __shared__ __align__(16) uint8_t smem[];
-    uint8_t* As = smem;                                  // 16 * TILE_K bytes
-    uint8_t* Bs = smem + (size_t)16 * TILE_K + 32;       // + small pad to reduce bank conflicts
+    // Layout: [A_packed (16 rows × TILE_K/4 ints)] [PAD] [B_packed (TILE_K/4 groups × 16 cols ints)]
+    // Use a small pad to reduce bank conflicts between the two regions.
+    int32_t* As4 = reinterpret_cast<int32_t*>(smem);
+    int32_t* Bs4 = reinterpret_cast<int32_t*>(smem + (size_t)16 * (TILE_K/4) * sizeof(int32_t) + 64);
 
-    // Process many nonces with a single persistent block (optional, good for large ranges)
+    // Process many nonces with a single persistent block
     for (int seed = blockIdx.x; seed < nonce_count; seed += gridDim.x) {
 
         // Thread (0,0) builds the 240B seed and computes root/preCV/lastWords
         if (i == 0 && j == 0) {
             atomicAdd(d_iter_count, 1ULL);
 
-            // prefix[0..231]
             #pragma unroll
             for (int t = 0; t < 232; ++t) sh_seed[t] = sh_prefix[t];
 
-            // nonce (LE) into bytes 232..239
             const u64 nonce = nonce_start + (u64)seed;
             store_le64(&sh_seed[232], nonce);
 
-            // derive root/preCV/lastWords/lastLen
             compute_root_from_seed240(sh_seed, sh_root, sh_precv, sh_lwords, &sh_llen);
         }
         __syncthreads();
 
-        // --- Matmul 16xK by Kx16 with on-the-fly XOF using sh_root/sh_precv/sh_lwords ---
         constexpr int K            = 50240;
         constexpr int A_BYTES      = 16 * K;           // 803,840
         constexpr int A_BLOCKS     = A_BYTES / 64;     // 12,560
@@ -462,188 +481,111 @@ void solve_nonce_range_fused(
         int acc   = 0;
         int sum_b = 0;
 
-        // Flattened thread id for coalesced cooperative loads
         const int thread_id     = threadIdx.y * blockDim.x + threadIdx.x; // 0..255
         const int total_threads = blockDim.x * blockDim.y;                 // 256
 
         for (int k0 = 0; k0 < K; k0 += TILE_K) {
-            const int tile = min(TILE_K, K - k0);
+            const int tile    = min(TILE_K, K - k0);
+            const int groups  = (tile + 3) >> 2;        // number of 4-byte DP4A groups
+            const int strideA = (TILE_K >> 2);          // ints per row
+            const int strideB = 16;                     // ints per group (one per column)
 
-            // ---- Produce A tile into As (by rows), coalesced via linear thread id ----
+            // =========================================================================
+            // 1) Produce & PRE-PACK A: (16 rows × tile) → (16 rows × groups) int32
+            //    We XOF in 64-byte blocks, each block → 16 ints (each packs 4 bytes).
+            // =========================================================================
             const int a_blocks_per_row = (tile + 63) / 64;
+
             for (int linear_idx = thread_id; linear_idx < 16 * a_blocks_per_row; linear_idx += total_threads) {
                 const int ri      = linear_idx / a_blocks_per_row;  // row 0..15
-                const int rb      = linear_idx % a_blocks_per_row;  // 64-B block index within the row
+                const int rb      = linear_idx % a_blocks_per_row;  // 64B block index within the row
                 const int kk_base = rb * 64;
 
                 if (kk_base < tile) {
                     const uint32_t blkA = (uint32_t)(ri * (K/64) + (k0/64) + rb);
 
                     u32 words[16];
-                    //xof_emit_words(blkA, sh_root, sh_precv, sh_lwords, llen, words);
+                    xof_emit_words(blkA, sh_root, sh_precv, sh_lwords, llen, words);
+                    const uint8_t* w = reinterpret_cast<const uint8_t*>(words);
 
-                    // Vectorized store: 64B = 4×uint4 (16B each)
-                    uint8_t* dst_byte = As + (size_t)ri * TILE_K + kk_base;
-                    uint4*   dst_vec  = reinterpret_cast<uint4*>(dst_byte);
-                    uint4*   src_vec  = reinterpret_cast<uint4*>(words);
-
+                    // 16 packed ints per 64B block
                     #pragma unroll
-                    for (int v = 0; v < 4; ++v) {
-                        const int byte_off = v * 16;
-                        if (kk_base + byte_off < tile) {
-                            dst_vec[v] = src_vec[v];
+                    for (int q = 0; q < 16; ++q) {
+                        const int gidx = (kk_base >> 2) + q;   // which 4-byte group along k
+                        if (gidx < groups) {
+                            // Handle tail: pad past tile with zeros
+                            const int byte0_k = kk_base + 4*q + 0;
+                            const int byte1_k = kk_base + 4*q + 1;
+                            const int byte2_k = kk_base + 4*q + 2;
+                            const int byte3_k = kk_base + 4*q + 3;
+
+                            uint8_t b0 = (byte0_k < tile) ? w[4*q + 0] : 0;
+                            uint8_t b1 = (byte1_k < tile) ? w[4*q + 1] : 0;
+                            uint8_t b2 = (byte2_k < tile) ? w[4*q + 2] : 0;
+                            uint8_t b3 = (byte3_k < tile) ? w[4*q + 3] : 0;
+
+                            As4[ri * strideA + gidx] = pack4_sub128(b0, b1, b2, b3);
                         }
                     }
                 }
             }
 
-            // ---- Produce B tile into Bs (by columns), vectorized scatter ----
-            const int b_blocks = (tile + 3) / 4; // 4 bytes per col-chunk
-            for (int gb = thread_id; gb < b_blocks; gb += total_threads) {
+            // =========================================================================
+            // 2) Produce & PRE-PACK B: (tile × 16) but store as groups along k for each col j
+            //    For each group (kk..kk+3), pack B[kk..kk+3][j] into one int32.
+            // =========================================================================
+            for (int gb = thread_id; gb < groups; gb += total_threads) {
                 const int kk_base = gb * 4;
                 const uint32_t blkB = (uint32_t)(B_BASE_BLOCK + ((k0 + kk_base) >> 2));
 
                 u32 words[16];
-                //xof_emit_words(blkB, sh_root, sh_precv, sh_lwords, llen, words);
+                xof_emit_words(blkB, sh_root, sh_precv, sh_lwords, llen, words);
+                const uint8_t* w = reinterpret_cast<const uint8_t*>(words);
+                // w layout: 4 consecutive 16-byte “columns” for kk, kk+1, kk+2, kk+3:
+                // [ j0..j15 | j0..j15 | j0..j15 | j0..j15 ]
 
-                // For each of 4 columns in this 64-B block, drop one uint4 (16B) into Bs
-                const uint4* srcw_vec = reinterpret_cast<const uint4*>(words);
                 #pragma unroll
-                for (int q = 0; q < 4; ++q) {
-                    const int kk = kk_base + q;
-                    if (kk < tile) {
-                        uint4* dstw_vec = reinterpret_cast<uint4*>(Bs + (size_t)kk * 16);
-                        *dstw_vec = srcw_vec[q];
-                    }
+                for (int jj = 0; jj < 16; ++jj) {
+                    const int k0_ok = (kk_base + 0) < tile;
+                    const int k1_ok = (kk_base + 1) < tile;
+                    const int k2_ok = (kk_base + 2) < tile;
+                    const int k3_ok = (kk_base + 3) < tile;
+
+                    uint8_t b0 = k0_ok ? w[0*16 + jj] : 0;
+                    uint8_t b1 = k1_ok ? w[1*16 + jj] : 0;
+                    uint8_t b2 = k2_ok ? w[2*16 + jj] : 0;
+                    uint8_t b3 = k3_ok ? w[3*16 + jj] : 0;
+
+                    Bs4[gb * strideB + jj] = pack4_i8(b0, b1, b2, b3);
                 }
             }
+
             __syncthreads();
 
-            // ---- DP4A accumulate with aggressive unrolling ----
-            int kk = 0;
+            // =========================================================================
+            // 3) Compute:  One DP4A per 4-k group. Also sum_b via DP4A with 0x01010101.
+            // =========================================================================
+            const int ONES = 0x01010101;
+            for (int g = 0; g < groups; ++g) {
+                const int a_p = As4[i * strideA + g];
+                const int b_p = Bs4[g * strideB + j];
 
-            // 16-wide block (4×DP4A) for maximal ILP
-            for (; kk + 15 < tile; kk += 16) {
-                // Load 4×uint32 (16 bytes) of A as four 4-tuples
-                uint32_t a_vec1 = *reinterpret_cast<const uint32_t*>(As + (size_t)i*TILE_K + kk + 0);
-                uint32_t a_vec2 = *reinterpret_cast<const uint32_t*>(As + (size_t)i*TILE_K + kk + 4);
-                uint32_t a_vec3 = *reinterpret_cast<const uint32_t*>(As + (size_t)i*TILE_K + kk + 8);
-                uint32_t a_vec4 = *reinterpret_cast<const uint32_t*>(As + (size_t)i*TILE_K + kk + 12);
-
-                auto pack4 = [](uint32_t r)->int {
-                    int a0 = (int)((r >>  0) & 0xFF) - 128;
-                    int a1 = (int)((r >>  8) & 0xFF) - 128;
-                    int a2 = (int)((r >> 16) & 0xFF) - 128;
-                    int a3 = (int)((r >> 24) & 0xFF) - 128;
-                    return (a0 & 0xFF) | ((a1 & 0xFF) << 8) | ((a2 & 0xFF) << 16) | ((a3 & 0xFF) << 24);
-                };
-
-                int a_p1 = pack4(a_vec1);
-                int a_p2 = pack4(a_vec2);
-                int a_p3 = pack4(a_vec3);
-                int a_p4 = pack4(a_vec4);
-
-                // Load B as 16 separate int8, then pack in 4-tuples
-                #define B_AT(off) ((int)((int8_t)Bs[(size_t)(kk + (off)) * 16 + j]))
-                int b0=B_AT(0),  b1=B_AT(1),  b2=B_AT(2),  b3=B_AT(3);
-                int b4=B_AT(4),  b5=B_AT(5),  b6=B_AT(6),  b7=B_AT(7);
-                int b8=B_AT(8),  b9=B_AT(9),  b10=B_AT(10), b11=B_AT(11);
-                int b12=B_AT(12),b13=B_AT(13),b14=B_AT(14), b15=B_AT(15);
-                #undef B_AT
-
-                int b_p1 = (b0 & 0xFF) | ((b1 & 0xFF) << 8) | ((b2 & 0xFF) << 16) | ((b3 & 0xFF) << 24);
-                int b_p2 = (b4 & 0xFF) | ((b5 & 0xFF) << 8) | ((b6 & 0xFF) << 16) | ((b7 & 0xFF) << 24);
-                int b_p3 = (b8 & 0xFF) | ((b9 & 0xFF) << 8) | ((b10 & 0xFF) << 16) | ((b11 & 0xFF) << 24);
-                int b_p4 = (b12 & 0xFF) | ((b13 & 0xFF) << 8) | ((b14 & 0xFF) << 16) | ((b15 & 0xFF) << 24);
-
-                sum_b += (b0 + b1 + b2 + b3 +
-                          b4 + b5 + b6 + b7 +
-                          b8 + b9 + b10 + b11 +
-                          b12 + b13 + b14 + b15);
-
-                acc = __dp4a(a_p1, b_p1, acc);
-                acc = __dp4a(a_p2, b_p2, acc);
-                acc = __dp4a(a_p3, b_p3, acc);
-                acc = __dp4a(a_p4, b_p4, acc);
-            }
-
-            // 8-wide block (2×DP4A)
-            for (; kk + 7 < tile; kk += 8) {
-                uint32_t a_vec1 = *reinterpret_cast<const uint32_t*>(As + (size_t)i*TILE_K + kk + 0);
-                uint32_t a_vec2 = *reinterpret_cast<const uint32_t*>(As + (size_t)i*TILE_K + kk + 4);
-
-                auto pack4s = [](uint32_t r)->int {
-                    int a0 = (int)((r >>  0) & 0xFF) - 128;
-                    int a1 = (int)((r >>  8) & 0xFF) - 128;
-                    int a2 = (int)((r >> 16) & 0xFF) - 128;
-                    int a3 = (int)((r >> 24) & 0xFF) - 128;
-                    return (a0 & 0xFF) | ((a1 & 0xFF) << 8) | ((a2 & 0xFF) << 16) | ((a3 & 0xFF) << 24);
-                };
-
-                int a_p1 = pack4s(a_vec1);
-                int a_p2 = pack4s(a_vec2);
-
-                int b0 = (int)((int8_t)Bs[(size_t)(kk + 0) * 16 + j]);
-                int b1 = (int)((int8_t)Bs[(size_t)(kk + 1) * 16 + j]);
-                int b2 = (int)((int8_t)Bs[(size_t)(kk + 2) * 16 + j]);
-                int b3 = (int)((int8_t)Bs[(size_t)(kk + 3) * 16 + j]);
-                int b4 = (int)((int8_t)Bs[(size_t)(kk + 4) * 16 + j]);
-                int b5 = (int)((int8_t)Bs[(size_t)(kk + 5) * 16 + j]);
-                int b6 = (int)((int8_t)Bs[(size_t)(kk + 6) * 16 + j]);
-                int b7 = (int)((int8_t)Bs[(size_t)(kk + 7) * 16 + j]);
-
-                int b_p1 = (b0 & 0xFF) | ((b1 & 0xFF) << 8) | ((b2 & 0xFF) << 16) | ((b3 & 0xFF) << 24);
-                int b_p2 = (b4 & 0xFF) | ((b5 & 0xFF) << 8) | ((b6 & 0xFF) << 16) | ((b7 & 0xFF) << 24);
-
-                sum_b += (b0 + b1 + b2 + b3 + b4 + b5 + b6 + b7);
-                acc = __dp4a(a_p1, b_p1, acc);
-                acc = __dp4a(a_p2, b_p2, acc);
-            }
-
-            // 4-wide block (1×DP4A)
-            for (; kk + 3 < tile; kk += 4) {
-                uint32_t a_vec = *reinterpret_cast<const uint32_t*>(As + (size_t)i*TILE_K + kk);
-
-                int a0 = (int)((a_vec >>  0) & 0xFF) - 128;
-                int a1 = (int)((a_vec >>  8) & 0xFF) - 128;
-                int a2 = (int)((a_vec >> 16) & 0xFF) - 128;
-                int a3 = (int)((a_vec >> 24) & 0xFF) - 128;
-                int a_p = (a0 & 0xFF) | ((a1 & 0xFF) << 8) | ((a2 & 0xFF) << 16) | ((a3 & 0xFF) << 24);
-
-                int b0 = (int)((int8_t)Bs[(size_t)(kk + 0) * 16 + j]);
-                int b1 = (int)((int8_t)Bs[(size_t)(kk + 1) * 16 + j]);
-                int b2 = (int)((int8_t)Bs[(size_t)(kk + 2) * 16 + j]);
-                int b3 = (int)((int8_t)Bs[(size_t)(kk + 3) * 16 + j]);
-                int b_p = (b0 & 0xFF) | ((b1 & 0xFF) << 8) | ((b2 & 0xFF) << 16) | ((b3 & 0xFF) << 24);
-
-                sum_b += (b0 + b1 + b2 + b3);
-                acc = __dp4a(a_p, b_p, acc);
-            }
-
-            // Scalar tail
-            for (; kk < tile; ++kk) {
-                int a_s = (int)((unsigned)As[(size_t)i*TILE_K + kk]) - 128;
-                int b_s = (int)((int8_t)Bs[(size_t)kk * 16 + j]);
-                acc   += a_s * b_s;
-                sum_b += b_s;
+                acc   = __dp4a(a_p, b_p, acc);         // 4 MACs
+                sum_b = __dp4a(ONES, b_p, sum_b);      // sum of 4 int8s in one op
             }
 
             __syncthreads();
         }
 
-        // Un-bias A via shift (128 * sum_b)
+        // Undo A bias: (A_u8 - 128) * b  =>  add back 128 * sum_b
         acc += (sum_b << 7);
 
-        // Keep your 16×16 tile in shared (useful if/when you re-enable on-chip hashing)
         tileC[i * 16 + j] = acc;
 
-        // (Hashing path kept commented; re-enable when needed)
-        // if (i == 0 && j == 0) { ... g_compress over 16×64B of tileC ... }
         __syncthreads();
-        if (i == 0 && j == 0 && seed == 0) { 
-            d_hashes[0] = tileC[0];
+        if (i == 0 && j == 0 && seed == 0) {
+            d_hashes[0] = (u32)tileC[0];
         }
     }
 }
-
 
