@@ -641,7 +641,7 @@ void solve_nonce_range_fused(
 
         // (Hashing path kept commented; re-enable when needed)
         // if (i == 0 && j == 0) { ... g_compress over 16×64B of tileC ... }
-        // __syncthreads();
+        __syncthreads();
     }
 }
 
