@@ -61,8 +61,6 @@ pub fn test_cpu_cv_vs_gpu_zero() {
 fn main() -> Result<(), DriverError> {
     let start = std::time::Instant::now();
 
-    test_cpu_cv_vs_gpu_zero();
-
     let opts = CompileOptions {
         arch: Some("compute_61"),
         include_paths: vec!["/usr/local/cuda/include".into(), "/opt/cuda/include".into()],

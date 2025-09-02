@@ -318,6 +318,7 @@ void solve_nonce_range_fused(const uint8_t* __restrict__ d_prefix232, // 232 byt
             #pragma unroll
             for (int t = 0; t < 232; ++t) sh_seed[t] = sh_prefix[t];
             const u64 nonce = nonce_start + (u64)seed;
+            printf("using nonce %lx\n", nonce);
             store_le64(&sh_seed[232], nonce);
 
             compute_root_from_seed240(sh_seed, sh_root, sh_precv, sh_lwords, &sh_llen);
