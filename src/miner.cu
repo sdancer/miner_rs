@@ -480,7 +480,7 @@ void solve_nonce_range_fused(
                     const uint32_t blkA = (uint32_t)(ri * (K/64) + (k0/64) + rb);
 
                     u32 words[16];
-                    xof_emit_words(blkA, sh_root, sh_precv, sh_lwords, llen, words);
+                    //xof_emit_words(blkA, sh_root, sh_precv, sh_lwords, llen, words);
 
                     // Vectorized store: 64B = 4×uint4 (16B each)
                     uint8_t* dst_byte = As + (size_t)ri * TILE_K + kk_base;
@@ -504,7 +504,7 @@ void solve_nonce_range_fused(
                 const uint32_t blkB = (uint32_t)(B_BASE_BLOCK + ((k0 + kk_base) >> 2));
 
                 u32 words[16];
-                xof_emit_words(blkB, sh_root, sh_precv, sh_lwords, llen, words);
+                //xof_emit_words(blkB, sh_root, sh_precv, sh_lwords, llen, words);
 
                 // For each of 4 columns in this 64-B block, drop one uint4 (16B) into Bs
                 const uint4* srcw_vec = reinterpret_cast<const uint4*>(words);
