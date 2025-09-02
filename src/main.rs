@@ -136,11 +136,13 @@ fn main() -> Result<(), DriverError> {
     unsafe { builder.launch(cfg) }?;
     stream.synchronize()?;
 
+    let ela = start.elapsed();
+
     // --- Copy back & print 16x16 result ---
     stream.memcpy_dtoh(&d_out, &mut out_host)?;
     let tensor_c_bytes = map_to_binary_host(&out_host);
     print_tensor_bytes_grid(&tensor_c_bytes);
-    println!("Done in {:?}", start.elapsed());
+    println!("Done in {:?}", ela);
 
 stream.memcpy_dtoh(&d_counter, &mut h_counter)?;
 println!("iterations = {}", h_counter[0]);
