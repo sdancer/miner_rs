@@ -127,7 +127,7 @@ fn main() -> Result<(), DriverError> {
     // Kernel expects block (16,16,1), grid (>=1 blocks). One block = one seed here.
     let tile_k: u32 = 1024;
 let smem_bytes: u32 = 32 * tile_k + 64;
-let grid_x = 2048;
+let grid_x = 1024;
 let grid = (grid_x as u32, 1, 1);
 let block = (16u32, 16u32, 1u32);
 
