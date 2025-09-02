@@ -39,6 +39,8 @@ __constant__ const u32 g_IV[8] = {
     0x510E527F, 0x9B05688C, 0x1F83D9AB, 0x5BE0CD19,
 };
 
+
+#ifdef NEWGCOMP
 __device__ __forceinline__ uint32_t g_rotr32(uint32_t v, int s) {
     return (v >> s) | (v << (32 - s));
 }
@@ -166,6 +168,118 @@ __device__ __forceinline__ void g_compress(
     state_out[8]=s8;  state_out[9]=s9;   state_out[10]=s10; state_out[11]=s11;
     state_out[12]=s12;state_out[13]=s13; state_out[14]=s14; state_out[15]=s15;
 }
+#else
+__constant__ const int g_MSG_PERMUTATION[] = {
+    2, 6, 3, 10, 7, 0, 4, 13,
+    1, 11, 12, 5, 9, 14, 15, 8
+};
+
+__device__ __forceinline__ u32 g_rotr(u32 value, int shift) {
+    // OPTIMIZATION: Use fast bit rotation with compiler intrinsics for lower precision/higher speed
+    return __funnelshift_r(value, value, shift);
+}
+
+__device__ __forceinline__ void g_g(u32 state[16], u32 a, u32 b, u32 c, u32 d, u32 mx, u32 my) {
+    // OPTIMIZATION: Fast arithmetic with reduced precision (CPU verification will catch errors)
+    // Use fast unchecked arithmetic - overflow is acceptable for speed
+    u32 temp_a = state[a] + state[b] + mx; // Fast unchecked addition
+    state[d] = g_rotr((state[d] ^ temp_a), 16);
+    u32 temp_c = state[c] + state[d];
+
+    state[b] = g_rotr((state[b] ^ temp_c), 12);
+    temp_a += state[b] + my; // Fast unchecked addition
+    state[d] = g_rotr((state[d] ^ temp_a), 8);
+
+    temp_c += state[d]; // Fast unchecked addition
+    state[b] = g_rotr((state[b] ^ temp_c), 7);
+
+    // Write back results
+    state[a] = temp_a;
+    state[c] = temp_c;
+}
+
+__device__ void g_round(u32 state[16], u32 m[16]) {
+    // Mix the columns.
+    g_g(state, 0, 4, 8, 12, m[0], m[1]);
+    g_g(state, 1, 5, 9, 13, m[2], m[3]);
+    g_g(state, 2, 6, 10, 14, m[4], m[5]);
+    g_g(state, 3, 7, 11, 15, m[6], m[7]);
+    // Mix the diagonals.
+    g_g(state, 0, 5, 10, 15, m[8], m[9]);
+    g_g(state, 1, 6, 11, 12, m[10], m[11]);
+    g_g(state, 2, 7, 8, 13, m[12], m[13]);
+    g_g(state, 3, 4, 9, 14, m[14], m[15]);
+}
+
+__device__ void g_permute(u32 m[16]) {
+    u32 permuted[16];
+    for(int i=0; i<16; i++)
+        permuted[i] = m[g_MSG_PERMUTATION[i]];
+    for(int i=0; i<16; i++)
+        m[i] = permuted[i];
+}
+
+// custom memcpy, apparently cuda's memcpy is slow
+// when called within a kernel
+__device__ void g_memcpy(u32 *lhs, const u32 *rhs, int size) {
+    // assuming u32 is 4 bytes
+    int len = size / 4;
+    for(int i=0; i<len; i++)
+        lhs[i] = rhs[i];
+}
+
+// custom memset
+template<typename T, typename ptr_t>
+__device__ void g_memset(ptr_t dest, T val, int count) {
+    for(int i=0; i<count; i++)
+        dest[i] = val;
+}
+
+__device__ __forceinline__ void g_compress(
+    const u32 *chaining_value,
+    const u32 *block_words,
+    u64 counter,
+    u32 block_len,
+    u32 flags,
+    u32 *state
+) {
+
+    g_memcpy(state, chaining_value, 32);
+    g_memcpy(state+8, g_IV, 16);
+    state[12] = (u32)counter;
+    state[13] = (u32)(counter >> 32);
+    state[14] = block_len;
+    state[15] = flags;
+
+    u32 block[16];
+    g_memcpy(block, block_words, 64);
+
+    g_round(state, block); // round 1
+
+    g_permute(block);
+    g_round(state, block); // round 2
+
+    g_permute(block);
+    g_round(state, block); // round 3
+
+    g_permute(block);
+    g_round(state, block); // round 4
+
+    g_permute(block);
+    g_round(state, block); // round 5
+
+    g_permute(block);
+    g_round(state, block); // round 6
+
+    g_permute(block);
+    g_round(state, block); // round 7
+
+
+    for(int i = 0; i < 8; i++){
+        state[i] ^= state[i + 8];
+    }
+}
+#endif
 
 
 extern "C" __global__ void compress(
