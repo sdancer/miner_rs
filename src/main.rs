@@ -110,7 +110,7 @@ fn main() -> Result<(), DriverError> {
 
     // Nonce range: start=0, count=1 (single seed)
     let nonce_start: u64 = 0;
-    let nonce_count: i32 = 100000;
+    let nonce_count: i32 = 500000;
 
     println!("Copied in {:?}", start.elapsed());
 
@@ -118,7 +118,7 @@ fn main() -> Result<(), DriverError> {
     // Kernel expects block (16,16,1), grid (>=1 blocks). One block = one seed here.
     let cfg = LaunchConfig {
         block_dim: (16, 16, 1),
-        grid_dim: (2048, 1, 1),
+        grid_dim: (4096, 1, 1),
         // TILE_K = 256 in the kernel → shared = 16*TILE_K + TILE_K*16 bytes = 8192
         shared_mem_bytes: (16 * 256 + 256 * 16) as u32,
     };
