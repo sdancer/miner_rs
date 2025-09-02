@@ -491,11 +491,11 @@ void solve_nonce_range_fused(
             }
 
             // write final 8×u32 hash for this seed
-            if (seed == 0) {
-            #pragma unroll
-            for (int w = 0; w < 8; ++w)
-                d_hashes[(size_t)seed * 8 + w] = cv[w];
-            }
+            //if (seed == 0) {
+            //#pragma unroll
+            //for (int w = 0; w < 8; ++w)
+            //    d_hashes[(size_t)seed * 8 + w] = cv[w];
+            //}
         }
 
         __syncthreads(); // ensure (0,0) done before next seed iteration
