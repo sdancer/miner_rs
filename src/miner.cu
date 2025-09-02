@@ -422,8 +422,10 @@ void solve_nonce_range_fused(
 
     // Copy the common 232B prefix once per block
     if (i == 0 && j == 0) {
-   }
-//    __syncthreads();
+        #pragma unroll
+        for (int t = 0; t < 232; ++t) sh_prefix[t] = d_prefix232[t];
+    }
+    __syncthreads();
 
     // ---- Dynamic shared for tiles (matches your matmul kernel) ----
     extern __shared__ __align__(16) uint8_t smem[];
@@ -435,9 +437,7 @@ void solve_nonce_range_fused(
 
         // Thread (0,0) builds the 240B seed and computes root/preCV/lastWords
         if (i == 0 && j == 0) {
-        #pragma unroll
-        for (int t = 0; t < 232; ++t) sh_prefix[t] = d_prefix232[t];
- 
+
             atomicAdd(d_iter_count, 1ULL);
             // seed = prefix[0..231] || nonce_le[8]
             #pragma unroll
@@ -571,6 +571,8 @@ void solve_nonce_range_fused(
 
         // Write C for this seed (one 16x16 tile per seed)
         tileC[i * 16 + j] = acc;
+        __syncthreads();
+
         __syncthreads();
 
 
