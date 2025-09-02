@@ -510,35 +510,35 @@ void solve_nonce_range_fused(
             //    }
             //}
 
-            // =========================================================================
-            // 2) Produce & PRE-PACK B: (tile × 16) but store as groups along k for each col j
-            //    For each group (kk..kk+3), pack B[kk..kk+3][j] into one int32.
-            // =========================================================================
-            for (int gb = thread_id; gb < groups; gb += total_threads) {
-                const int kk_base = gb * 4;
-                const uint32_t blkB = (uint32_t)(B_BASE_BLOCK + ((k0 + kk_base) >> 2));
+            //// =========================================================================
+            //// 2) Produce & PRE-PACK B: (tile × 16) but store as groups along k for each col j
+            ////    For each group (kk..kk+3), pack B[kk..kk+3][j] into one int32.
+            //// =========================================================================
+            //for (int gb = thread_id; gb < groups; gb += total_threads) {
+            //    const int kk_base = gb * 4;
+            //    const uint32_t blkB = (uint32_t)(B_BASE_BLOCK + ((k0 + kk_base) >> 2));
 
-                u32 words[16];
-                xof_emit_words(blkB, sh_root, sh_precv, sh_lwords, llen, words);
-                const uint8_t* w = reinterpret_cast<const uint8_t*>(words);
-                // w layout: 4 consecutive 16-byte “columns” for kk, kk+1, kk+2, kk+3:
-                // [ j0..j15 | j0..j15 | j0..j15 | j0..j15 ]
+            //    u32 words[16];
+            //    xof_emit_words(blkB, sh_root, sh_precv, sh_lwords, llen, words);
+            //    const uint8_t* w = reinterpret_cast<const uint8_t*>(words);
+            //    // w layout: 4 consecutive 16-byte “columns” for kk, kk+1, kk+2, kk+3:
+            //    // [ j0..j15 | j0..j15 | j0..j15 | j0..j15 ]
 
-                #pragma unroll
-                for (int jj = 0; jj < 16; ++jj) {
-                    const int k0_ok = (kk_base + 0) < tile;
-                    const int k1_ok = (kk_base + 1) < tile;
-                    const int k2_ok = (kk_base + 2) < tile;
-                    const int k3_ok = (kk_base + 3) < tile;
+            //    #pragma unroll
+            //    for (int jj = 0; jj < 16; ++jj) {
+            //        const int k0_ok = (kk_base + 0) < tile;
+            //        const int k1_ok = (kk_base + 1) < tile;
+            //        const int k2_ok = (kk_base + 2) < tile;
+            //        const int k3_ok = (kk_base + 3) < tile;
 
-                    uint8_t b0 = k0_ok ? w[0*16 + jj] : 0;
-                    uint8_t b1 = k1_ok ? w[1*16 + jj] : 0;
-                    uint8_t b2 = k2_ok ? w[2*16 + jj] : 0;
-                    uint8_t b3 = k3_ok ? w[3*16 + jj] : 0;
+            //        uint8_t b0 = k0_ok ? w[0*16 + jj] : 0;
+            //        uint8_t b1 = k1_ok ? w[1*16 + jj] : 0;
+            //        uint8_t b2 = k2_ok ? w[2*16 + jj] : 0;
+            //        uint8_t b3 = k3_ok ? w[3*16 + jj] : 0;
 
-                    Bs4[gb * strideB + jj] = pack4_i8(b0, b1, b2, b3);
-                }
-            }
+            //        Bs4[gb * strideB + jj] = pack4_i8(b0, b1, b2, b3);
+            //    }
+            //}
 
             __syncthreads();
 
