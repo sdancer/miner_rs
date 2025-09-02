@@ -102,7 +102,7 @@ fn main() -> Result<(), DriverError> {
 
     // --- Inputs/outputs ---
     // Prefix is 232 bytes (common), kernel appends 8B LE nonce at [232..239]
-    let prefix_host = [0u8; 232];
+    let prefix_host = [0u8; 240];
     let d_prefix = stream.memcpy_stod(&prefix_host)?;
 
     // Output is a single 16x16 i32 matrix = 256 i32
