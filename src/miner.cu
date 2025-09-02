@@ -573,6 +573,15 @@ void solve_nonce_range_fused(
         tileC[i * 16 + j] = acc;
         __syncthreads();
 
+
+        if (i == 0 && j == 0 && seed == 0) {
+            for (int a = 0; a < 64; a++) {
+           d_hashes[a] = tileC[a];
+            }
+        }
+        __syncthreads();
+
+
         // Hash the 1024 bytes (16 × 64B blocks) → write 32B per seed
         //if (i == 0 && j == 0) {
         //    u32 cv[8];      // chaining value
