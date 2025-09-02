@@ -198,6 +198,7 @@ __device__ inline void xof_emit_words(
     u32 out[16];
 
     const uint64_t t = (uint64_t)blk;
+    printf("blk: %x\n", blk);
 
     const u32 flags = (CHUNK_END | ROOT);
     // g_compress writes 16 words to state; its low half is already lo^hi (root CV),
