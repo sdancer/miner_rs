@@ -121,10 +121,32 @@ fn main() -> Result<(), DriverError> {
 
     // --- Copy back & print 16x16 result ---
     stream.memcpy_dtoh(&d_out, &mut out_host)?;
-    println!("Result (16x16 i32):");
-    for r in 0..16 {
-        println!("{:?}", &out_host[r * 16..(r + 1) * 16]);
-    }
+let tensor_c_bytes = map_to_binary_host(&out_host);
+print_tensor_bytes_grid(&tensor_c_bytes);
     println!("Done in {:?}", start.elapsed());
     Ok(())
+}
+
+fn map_to_binary_host(c: &[i32; 256]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(16 * 16 * 4);
+    for r in 0..16 {
+        for ccol in 0..16 {
+            out.extend_from_slice(&c[r * 16 + ccol].to_le_bytes());
+        }
+    }
+    out
+}
+
+/// Pretty-print 1024 bytes as 16 rows of 64 bytes (groups of 4).
+fn print_tensor_bytes_grid(bytes: &[u8]) {
+    assert_eq!(bytes.len(), 1024);
+    println!("tensor_c (bytes; 16 rows × 64 bytes, groups = 1 i32):");
+    for r in 0..16 {
+        let row = &bytes[r * 64..(r + 1) * 64];
+        for (k, b) in row.iter().enumerate() {
+            if k > 0 && k % 4 == 0 { print!(" "); }
+            print!("{:02x}", b);
+        }
+        println!();
+    }
 }
