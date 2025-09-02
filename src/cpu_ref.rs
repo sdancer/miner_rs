@@ -1,4 +1,3 @@
-
 use blake3;
 use std::io::Read;
 
@@ -106,4 +105,3 @@ pub fn map_to_binary(c: [[i32; 16]; 16]) -> Vec<u8> {
     debug_assert_eq!(out.len(), TOTAL_BYTES);
     out
 }
-

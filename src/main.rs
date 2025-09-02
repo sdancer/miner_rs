@@ -60,7 +60,6 @@ pub fn test_cpu_cv_vs_gpu_zero() {
 }
 
 fn main() -> Result<(), DriverError> {
-
     let seed = [0u8; 240];
 
     // 1) Just show first 32 elements of the matmul (as before)
@@ -76,7 +75,7 @@ fn main() -> Result<(), DriverError> {
 
     let h = blake3::hash(&buf);
     println!("seed||matmul BLAKE3 = {}", h.to_hex());
- 
+
     let start = std::time::Instant::now();
 
     let opts = CompileOptions {
@@ -95,6 +94,10 @@ fn main() -> Result<(), DriverError> {
     let f = module.load_function("solve_nonce_range_fused")?;
 
     println!("Loaded in {:?}", start.elapsed());
+
+
+  let mut h_counter = [0u64];
+    let mut d_counter = stream.memcpy_stod(&h_counter)?;
 
     // --- Inputs/outputs ---
     // Prefix is 232 bytes (common), kernel appends 8B LE nonce at [232..239]
@@ -134,15 +137,12 @@ fn main() -> Result<(), DriverError> {
 
     // --- Copy back & print 16x16 result ---
     stream.memcpy_dtoh(&d_out, &mut out_host)?;
-let tensor_c_bytes = map_to_binary_host(&out_host);
-print_tensor_bytes_grid(&tensor_c_bytes);
+    let tensor_c_bytes = map_to_binary_host(&out_host);
+    print_tensor_bytes_grid(&tensor_c_bytes);
     println!("Done in {:?}", start.elapsed());
-   
-   // let dev = cudarc::CudaDevice::new(0)?;
-   // let d_sym = dev.get_global::<u64>("d_iter_count")?;
-   // let mut host_val: u64 = 0;
-   // dev.dtoh_sync_copy_into(&d_sym, &mut host_val)?;
-   // println!("iterations = {}", host_val);
+
+stream.memcpy_dtoh(&d_counter, &mut h_counter)?;
+println!("iterations = {}", h_counter[0]);
     Ok(())
 }
 
@@ -163,7 +163,9 @@ fn print_tensor_bytes_grid(bytes: &[u8]) {
     for r in 0..2 {
         let row = &bytes[r * 64..(r + 1) * 64];
         for (k, b) in row.iter().enumerate() {
-            if k > 0 && k % 4 == 0 { print!(" "); }
+            if k > 0 && k % 4 == 0 {
+                print!(" ");
+            }
             print!("{:02x}", b);
         }
         println!();
