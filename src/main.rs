@@ -93,6 +93,7 @@ fn main() -> Result<(), DriverError> {
 
     let module = ctx.load_module(ptx)?;
     let f = module.load_function("solve_nonce_range_fused")?;
+
     println!("Loaded in {:?}", start.elapsed());
 
     // --- Inputs/outputs ---
@@ -136,6 +137,12 @@ fn main() -> Result<(), DriverError> {
 let tensor_c_bytes = map_to_binary_host(&out_host);
 print_tensor_bytes_grid(&tensor_c_bytes);
     println!("Done in {:?}", start.elapsed());
+   
+   // let dev = cudarc::CudaDevice::new(0)?;
+   // let d_sym = dev.get_global::<u64>("d_iter_count")?;
+   // let mut host_val: u64 = 0;
+   // dev.dtoh_sync_copy_into(&d_sym, &mut host_val)?;
+   // println!("iterations = {}", host_val);
     Ok(())
 }
 

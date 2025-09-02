@@ -11,6 +11,9 @@ using u32 = uint32_t;
 using u64 = uint64_t;
 using u8  = uint8_t;
  
+
+__device__ unsigned long long d_iter_count = 0; 
+                                                
 //const u32 OUT_LEN = 32;
 //const u32 KEY_LEN = 32;
 //const u32 BLOCK_LEN = 64;
@@ -281,6 +284,8 @@ void compute_root_from_seed240(const uint8_t* __restrict__ seed240,
 #define TILE_K 256
 #endif
 
+
+                                                
 extern "C" __global__
 void solve_nonce_range_fused(const uint8_t* __restrict__ d_prefix232, // 232 bytes
                              u64 nonce_start,
@@ -318,6 +323,9 @@ void solve_nonce_range_fused(const uint8_t* __restrict__ d_prefix232, // 232 byt
 
         // Thread (0,0) builds the 240B seed and computes root/preCV/lastWords
         if (i == 0 && j == 0) {
+
+            atomicAdd(&d_iter_count, (unsigned long long)1);
+
             // seed = prefix[0..231] || nonce_le[8]
             #pragma unroll
             for (int t = 0; t < 232; ++t) sh_seed[t] = sh_prefix[t];
@@ -452,45 +460,46 @@ void solve_nonce_range_fused(const uint8_t* __restrict__ d_prefix232, // 232 byt
         tileC[i * 16 + j] = acc;
         __syncthreads();
 
+
         // Hash the 1024 bytes (16 × 64B blocks) → write 32B per seed
-        if (i == 0 && j == 0) {
-            u32 cv[8];      // chaining value
-            u32 st[16];     // g_compress output state
-            #pragma unroll
-            for (int w = 0; w < 8; ++w) cv[w] = g_IV[w];
+      //  if (i == 0 && j == 0) {
+      //      u32 cv[8];      // chaining value
+      //      u32 st[16];     // g_compress output state
+      //      #pragma unroll
+      //      for (int w = 0; w < 8; ++w) cv[w] = g_IV[w];
 
-            const uint8_t* bytes = reinterpret_cast<const uint8_t*>(tileC);
+      //      const uint8_t* bytes = reinterpret_cast<const uint8_t*>(tileC);
 
-            // 16 full 64B blocks
-            for (int blk = 0; blk < 16; ++blk) {
-                u32 m[16];
-                #pragma unroll
-                for (int w = 0; w < 16; ++w) m[w] = 0u;
-                // copy 64B into m as little-endian bytes
-                #pragma unroll
-                for (int b = 0; b < 64; ++b)
-                    reinterpret_cast<uint8_t*>(m)[b] = bytes[blk * 64 + b];
+      //      // 16 full 64B blocks
+      //      for (int blk = 0; blk < 16; ++blk) {
+      //          u32 m[16];
+      //          #pragma unroll
+      //          for (int w = 0; w < 16; ++w) m[w] = 0u;
+      //          // copy 64B into m as little-endian bytes
+      //          #pragma unroll
+      //          for (int b = 0; b < 64; ++b)
+      //              reinterpret_cast<uint8_t*>(m)[b] = bytes[blk * 64 + b];
 
-                u32 flags = 0;
-                if (blk == 0)     flags |= CHUNK_START;
-                if (blk == 15)    flags |= (CHUNK_END | ROOT);
+      //          u32 flags = 0;
+      //          if (blk == 0)     flags |= CHUNK_START;
+      //          if (blk == 15)    flags |= (CHUNK_END | ROOT);
 
-                g_compress(cv, m, blk, 64u, flags, st);
+      //          g_compress(cv, m, blk, 64u, flags, st);
 
-                // next CV = st[0..7] (feed-forwarded low half)
-                #pragma unroll
-                for (int w = 0; w < 8; ++w) cv[w] = st[w];
-            }
+      //          // next CV = st[0..7] (feed-forwarded low half)
+      //          #pragma unroll
+      //          for (int w = 0; w < 8; ++w) cv[w] = st[w];
+      //      }
 
-            // write final 8×u32 hash for this seed
-            if (seed == 0) {
-            #pragma unroll
-            for (int w = 0; w < 8; ++w)
-                d_hashes[(size_t)seed * 8 + w] = cv[w];
-            }
-        }
+      //      // write final 8×u32 hash for this seed
+      //      if (seed == 0) {
+      //      #pragma unroll
+      //      for (int w = 0; w < 8; ++w)
+      //          d_hashes[(size_t)seed * 8 + w] = cv[w];
+      //      }
+      //  }
 
-        __syncthreads(); // ensure (0,0) done before next seed iteration
+     //   __syncthreads(); // ensure (0,0) done before next seed iteration
     }
 }
 
