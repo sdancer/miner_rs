@@ -5,6 +5,7 @@ const PTX_SRC: &str = include_str!("miner.cu");
 use cudarc::nvrtc::CompileOptions;
 
 use blake3::platform::Platform;
+mod cpu_ref;
 
 /// Tiny hex (lowercase) helper without pulling a crate.
 fn hex_lower(data: &[u8]) -> String {
@@ -59,6 +60,11 @@ pub fn test_cpu_cv_vs_gpu_zero() {
 }
 
 fn main() -> Result<(), DriverError> {
+
+    let x = cpu_ref::calculate_matmul(&[0u8;240]);
+    println!("matmul seed 0: {:?}", x);
+ 
+
     let start = std::time::Instant::now();
 
     let opts = CompileOptions {
