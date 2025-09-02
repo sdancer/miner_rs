@@ -125,13 +125,18 @@ fn main() -> Result<(), DriverError> {
 
     // --- Launch config ---
     // Kernel expects block (16,16,1), grid (>=1 blocks). One block = one seed here.
-    let cfg = LaunchConfig {
-        block_dim: (16, 16, 1),
-        grid_dim: (256 << 4, 1, 1), //4096 << 3
-        // TILE_K = 256 in the kernel → shared = 16*TILE_K + TILE_K*16 bytes = 8192
-        shared_mem_bytes: (16 * 256 + 256 * 16) as u32,
-    };
+    let tile_k: u32 = 1024;
+let smem_bytes: u32 = 32 * tile_k + 64;
 
+let grid = (grid_x as u32, 1, 1);
+let block = (16u32, 16u32, 1u32);
+
+let cfg = cudarc::driver::LaunchConfig {
+    grid_dim: grid,
+    block_dim: block,
+    shared_mem_bytes: smem_bytes,
+};
+    
     // --- Build args & launch ---
     let mut builder = stream.launch_builder(&f);
     // solve_nonce_range_fused(
