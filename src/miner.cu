@@ -476,69 +476,69 @@ void solve_nonce_range_fused(
             // =========================================================================
             const int a_blocks_per_row = (tile + 63) / 64;
 
-            for (int linear_idx = thread_id; linear_idx < 16 * a_blocks_per_row; linear_idx += total_threads) {
-                const int ri      = linear_idx / a_blocks_per_row;  // row 0..15
-                const int rb      = linear_idx % a_blocks_per_row;  // 64B block index within the row
-                const int kk_base = rb * 64;
+            //for (int linear_idx = thread_id; linear_idx < 16 * a_blocks_per_row; linear_idx += total_threads) {
+            //    const int ri      = linear_idx / a_blocks_per_row;  // row 0..15
+            //    const int rb      = linear_idx % a_blocks_per_row;  // 64B block index within the row
+            //    const int kk_base = rb * 64;
 
-                if (kk_base < tile) {
-                    const uint32_t blkA = (uint32_t)(ri * (K/64) + (k0/64) + rb);
+            //    if (kk_base < tile) {
+            //        const uint32_t blkA = (uint32_t)(ri * (K/64) + (k0/64) + rb);
 
-                    u32 words[16];
-                    xof_emit_words(blkA, sh_root, sh_precv, sh_lwords, llen, words);
-                    const uint8_t* w = reinterpret_cast<const uint8_t*>(words);
+            //        u32 words[16];
+            //        xof_emit_words(blkA, sh_root, sh_precv, sh_lwords, llen, words);
+            //        const uint8_t* w = reinterpret_cast<const uint8_t*>(words);
 
-                    // 16 packed ints per 64B block
-                    #pragma unroll
-                    for (int q = 0; q < 16; ++q) {
-                        const int gidx = (kk_base >> 2) + q;   // which 4-byte group along k
-                        if (gidx < groups) {
-                            // Handle tail: pad past tile with zeros
-                            const int byte0_k = kk_base + 4*q + 0;
-                            const int byte1_k = kk_base + 4*q + 1;
-                            const int byte2_k = kk_base + 4*q + 2;
-                            const int byte3_k = kk_base + 4*q + 3;
+            //        // 16 packed ints per 64B block
+            //        #pragma unroll
+            //        for (int q = 0; q < 16; ++q) {
+            //            const int gidx = (kk_base >> 2) + q;   // which 4-byte group along k
+            //            if (gidx < groups) {
+            //                // Handle tail: pad past tile with zeros
+            //                const int byte0_k = kk_base + 4*q + 0;
+            //                const int byte1_k = kk_base + 4*q + 1;
+            //                const int byte2_k = kk_base + 4*q + 2;
+            //                const int byte3_k = kk_base + 4*q + 3;
 
-                            uint8_t b0 = (byte0_k < tile) ? w[4*q + 0] : 0;
-                            uint8_t b1 = (byte1_k < tile) ? w[4*q + 1] : 0;
-                            uint8_t b2 = (byte2_k < tile) ? w[4*q + 2] : 0;
-                            uint8_t b3 = (byte3_k < tile) ? w[4*q + 3] : 0;
+            //                uint8_t b0 = (byte0_k < tile) ? w[4*q + 0] : 0;
+            //                uint8_t b1 = (byte1_k < tile) ? w[4*q + 1] : 0;
+            //                uint8_t b2 = (byte2_k < tile) ? w[4*q + 2] : 0;
+            //                uint8_t b3 = (byte3_k < tile) ? w[4*q + 3] : 0;
 
-                            As4[ri * strideA + gidx] = pack4_sub128(b0, b1, b2, b3);
-                        }
-                    }
-                }
-            }
+            //                As4[ri * strideA + gidx] = pack4_sub128(b0, b1, b2, b3);
+            //            }
+            //        }
+            //    }
+            //}
 
             // =========================================================================
             // 2) Produce & PRE-PACK B: (tile × 16) but store as groups along k for each col j
             //    For each group (kk..kk+3), pack B[kk..kk+3][j] into one int32.
             // =========================================================================
-            //for (int gb = thread_id; gb < groups; gb += total_threads) {
-            //    const int kk_base = gb * 4;
-            //    const uint32_t blkB = (uint32_t)(B_BASE_BLOCK + ((k0 + kk_base) >> 2));
+            for (int gb = thread_id; gb < groups; gb += total_threads) {
+                const int kk_base = gb * 4;
+                const uint32_t blkB = (uint32_t)(B_BASE_BLOCK + ((k0 + kk_base) >> 2));
 
-            //    u32 words[16];
-            //    xof_emit_words(blkB, sh_root, sh_precv, sh_lwords, llen, words);
-            //    const uint8_t* w = reinterpret_cast<const uint8_t*>(words);
-            //    // w layout: 4 consecutive 16-byte “columns” for kk, kk+1, kk+2, kk+3:
-            //    // [ j0..j15 | j0..j15 | j0..j15 | j0..j15 ]
+                u32 words[16];
+                xof_emit_words(blkB, sh_root, sh_precv, sh_lwords, llen, words);
+                const uint8_t* w = reinterpret_cast<const uint8_t*>(words);
+                // w layout: 4 consecutive 16-byte “columns” for kk, kk+1, kk+2, kk+3:
+                // [ j0..j15 | j0..j15 | j0..j15 | j0..j15 ]
 
-            //    #pragma unroll
-            //    for (int jj = 0; jj < 16; ++jj) {
-            //        const int k0_ok = (kk_base + 0) < tile;
-            //        const int k1_ok = (kk_base + 1) < tile;
-            //        const int k2_ok = (kk_base + 2) < tile;
-            //        const int k3_ok = (kk_base + 3) < tile;
+                #pragma unroll
+                for (int jj = 0; jj < 16; ++jj) {
+                    const int k0_ok = (kk_base + 0) < tile;
+                    const int k1_ok = (kk_base + 1) < tile;
+                    const int k2_ok = (kk_base + 2) < tile;
+                    const int k3_ok = (kk_base + 3) < tile;
 
-            //        uint8_t b0 = k0_ok ? w[0*16 + jj] : 0;
-            //        uint8_t b1 = k1_ok ? w[1*16 + jj] : 0;
-            //        uint8_t b2 = k2_ok ? w[2*16 + jj] : 0;
-            //        uint8_t b3 = k3_ok ? w[3*16 + jj] : 0;
+                    uint8_t b0 = k0_ok ? w[0*16 + jj] : 0;
+                    uint8_t b1 = k1_ok ? w[1*16 + jj] : 0;
+                    uint8_t b2 = k2_ok ? w[2*16 + jj] : 0;
+                    uint8_t b3 = k3_ok ? w[3*16 + jj] : 0;
 
-            //        Bs4[gb * strideB + jj] = pack4_i8(b0, b1, b2, b3);
-            //    }
-            //}
+                    Bs4[gb * strideB + jj] = pack4_i8(b0, b1, b2, b3);
+                }
+            }
 
             __syncthreads();
 
