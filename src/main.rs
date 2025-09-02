@@ -141,7 +141,7 @@ fn map_to_binary_host(c: &[i32; 256]) -> Vec<u8> {
 fn print_tensor_bytes_grid(bytes: &[u8]) {
     assert_eq!(bytes.len(), 1024);
     println!("tensor_c (bytes; 16 rows × 64 bytes, groups = 1 i32):");
-    for r in 0..16 {
+    for r in 0..2 {
         let row = &bytes[r * 64..(r + 1) * 64];
         for (k, b) in row.iter().enumerate() {
             if k > 0 && k % 4 == 0 { print!(" "); }

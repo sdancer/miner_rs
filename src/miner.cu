@@ -208,8 +208,8 @@ __device__ inline void xof_emit_words(
     #pragma unroll
     for (int w=0; w<8; ++w) dstw[w] = out[w];
 
-    #pragma unroll
-    for (int w=0; w<8; ++w) dstw[8+w] = out[8+w] ^ precv[w];
+    //#pragma unroll
+    //for (int w=0; w<8; ++w) dstw[8+w] = out[8+w] ^ precv[w];
 }
 
 #ifndef TILE_K
