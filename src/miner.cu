@@ -285,7 +285,7 @@ extern "C" __global__
 void solve_nonce_range_fused(const uint8_t* __restrict__ d_prefix232, // 232 bytes
                              u64 nonce_start,
                              int nonce_count,
-                             int32_t* __restrict__ d_C)
+                             u32* __restrict__ d_hashes)
 {
     const int i = threadIdx.y;   // 0..15
     const int j = threadIdx.x;   // 0..15
@@ -297,6 +297,9 @@ void solve_nonce_range_fused(const uint8_t* __restrict__ d_prefix232, // 232 byt
     __shared__ u32 sh_precv[8];
     __shared__ u32 sh_lwords[16];
     __shared__ uint8_t sh_llen; // = 48
+
+    // Each seed’s 16x16 accumulators (1024B) to be hashed on-chip
+    __shared__ int32_t tileC[16 * 16];
 
     // Copy the common 232B prefix once per block
     if (i == 0 && j == 0) {
@@ -319,37 +322,37 @@ void solve_nonce_range_fused(const uint8_t* __restrict__ d_prefix232, // 232 byt
             #pragma unroll
             for (int t = 0; t < 232; ++t) sh_seed[t] = sh_prefix[t];
             const u64 nonce = nonce_start + (u64)seed;
-            printf("using nonce %lx\n", nonce);
+            //printf("using nonce %lx\n", nonce);
             store_le64(&sh_seed[232], nonce);
 
             compute_root_from_seed240(sh_seed, sh_root, sh_precv, sh_lwords, &sh_llen);
 
-            printf("llen: %d\n", sh_llen);
-            for (int m = 0; m < 8; m++) {
-                 printf("%lx ", sh_root[m]);
-            }
-            printf("\n");
-            for (int m = 0; m < 8; m++) {
-                 printf("%lx ", sh_precv[m]);
-            }
-            printf("\n");
-   for (uint32_t blk = 0; blk < 2; ++blk) {
-                    u32 words[16];
-                    xof_emit_words(blk, sh_root, sh_precv, sh_lwords, (u32)sh_llen, words);
-                    // Print as 64 hex bytes
-                    printf("XOF blk %u: ", blk);
-                    #pragma unroll
-                    for (int w = 0; w < 16; ++w) {
-                        u32 v = words[w];
-                        unsigned b0 = (v >> 0)  & 0xFF;
-                        unsigned b1 = (v >> 8)  & 0xFF;
-                        unsigned b2 = (v >> 16) & 0xFF;
-                        unsigned b3 = (v >> 24) & 0xFF;
-                        printf("%02x%02x%02x%02x", b0, b1, b2, b3);
-                    }
-                    printf("\n");
-                }
-          }
+            //printf("llen: %d\n", sh_llen);
+            //for (int m = 0; m < 8; m++) {
+            //     printf("%lx ", sh_root[m]);
+            //}
+            //printf("\n");
+            //for (int m = 0; m < 8; m++) {
+            //     printf("%lx ", sh_precv[m]);
+            //}
+            //printf("\n");
+            //for (uint32_t blk = 0; blk < 2; ++blk) {
+            //        u32 words[16];
+            //        xof_emit_words(blk, sh_root, sh_precv, sh_lwords, (u32)sh_llen, words);
+            //        // Print as 64 hex bytes
+            //        printf("XOF blk %u: ", blk);
+            //        #pragma unroll
+            //        for (int w = 0; w < 16; ++w) {
+            //            u32 v = words[w];
+            //            unsigned b0 = (v >> 0)  & 0xFF;
+            //            unsigned b1 = (v >> 8)  & 0xFF;
+            //            unsigned b2 = (v >> 16) & 0xFF;
+            //            unsigned b3 = (v >> 24) & 0xFF;
+            //            printf("%02x%02x%02x%02x", b0, b1, b2, b3);
+            //        }
+            //        printf("\n");
+            //}
+         }
         __syncthreads();
 
         // --- Matmul 16xK by Kx16 with on-the-fly XOF using sh_root/sh_precv/sh_lwords ---
@@ -446,8 +449,48 @@ void solve_nonce_range_fused(const uint8_t* __restrict__ d_prefix232, // 232 byt
         acc += 128 * sum_b;
 
         // Write C for this seed (one 16x16 tile per seed)
-        d_C[(size_t)seed * 256 + (size_t)i * 16 + j] = acc;
+        tileC[i * 16 + j] = acc;
         __syncthreads();
+
+        // Hash the 1024 bytes (16 × 64B blocks) → write 32B per seed
+        if (i == 0 && j == 0) {
+            u32 cv[8];      // chaining value
+            u32 st[16];     // g_compress output state
+            #pragma unroll
+            for (int w = 0; w < 8; ++w) cv[w] = g_IV[w];
+
+            const uint8_t* bytes = reinterpret_cast<const uint8_t*>(tileC);
+
+            // 16 full 64B blocks
+            for (int blk = 0; blk < 16; ++blk) {
+                u32 m[16];
+                #pragma unroll
+                for (int w = 0; w < 16; ++w) m[w] = 0u;
+                // copy 64B into m as little-endian bytes
+                #pragma unroll
+                for (int b = 0; b < 64; ++b)
+                    reinterpret_cast<uint8_t*>(m)[b] = bytes[blk * 64 + b];
+
+                u32 flags = 0;
+                if (blk == 0)     flags |= CHUNK_START;
+                if (blk == 15)    flags |= (CHUNK_END | ROOT);
+
+                g_compress(cv, m, 0ULL, 64u, flags, st);
+
+                // next CV = st[0..7] (feed-forwarded low half)
+                #pragma unroll
+                for (int w = 0; w < 8; ++w) cv[w] = st[w];
+            }
+
+            // write final 8×u32 hash for this seed
+            if (seed == 0) {
+            #pragma unroll
+            for (int w = 0; w < 8; ++w)
+                d_hashes[(size_t)seed * 8 + w] = cv[w];
+            }
+        }
+
+        __syncthreads(); // ensure (0,0) done before next seed iteration
     }
 }
 
