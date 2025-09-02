@@ -446,7 +446,7 @@ void solve_nonce_range_fused(
             //printf("using nonce %lx\n", nonce);
             store_le64(&sh_seed[232], nonce);
 
-            //compute_root_from_seed240(sh_seed, sh_root, sh_precv, sh_lwords, &sh_llen);
+            compute_root_from_seed240(sh_seed, sh_root, sh_precv, sh_lwords, &sh_llen);
 
             //printf("llen: %d\n", sh_llen);
             //for (int m = 0; m < 8; m++) {
