@@ -553,14 +553,14 @@ void solve_nonce_range_fused(
     const int j = threadIdx.x;   // 0..15
 
     // ---- Static small shared (persists across tile iters) ----
-    __shared__ uint8_t sh_prefix[232];
-    __shared__ uint8_t sh_seed[240];
+    __shared__  __align__(16) uint8_t sh_prefix[232];
+    __shared__  __align__(16) uint8_t sh_seed[240];
     __shared__ u32 sh_root[8];
     __shared__ u32 sh_precv[8];
     __shared__ u32 sh_lwords[16];
     __shared__ uint8_t sh_llen; // = 48
 
-    __shared__ int32_t tileC[16 * 16];
+    __shared__  __align__(16) int32_t tileC[16 * 16];
 
     // Copy common 232B prefix once per block
     if (i == 0 && j == 0) {
