@@ -648,6 +648,9 @@ void solve_nonce_range_fused(
                d_hashes[a] =  tileC[a];
            }
         }
+   __syncthreads();
+
+
     }
 }
 
