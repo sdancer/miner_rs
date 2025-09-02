@@ -128,6 +128,7 @@ fn main() -> Result<(), DriverError> {
     // solve_nonce_range_fused(
     //   const u8* d_prefix232, u64 nonce_start, int nonce_count, int32_t* d_C)
     builder.arg(&d_prefix);
+    builder.arg(&d_counter);
     builder.arg(&nonce_start);
     builder.arg(&nonce_count);
     builder.arg(&mut d_out);

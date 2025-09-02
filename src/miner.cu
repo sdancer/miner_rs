@@ -12,8 +12,6 @@ using u64 = uint64_t;
 using u8  = uint8_t;
  
 
-__device__ unsigned long long d_iter_count = 0; 
-                                                
 //const u32 OUT_LEN = 32;
 //const u32 KEY_LEN = 32;
 //const u32 BLOCK_LEN = 64;
@@ -287,8 +285,9 @@ void compute_root_from_seed240(const uint8_t* __restrict__ seed240,
 
                                                 
 extern "C" __global__
-void solve_nonce_range_fused(const uint8_t* __restrict__ d_prefix232, // 232 bytes
-                                                                      unsigned long long* d_iter_count,
+void solve_nonce_range_fused(
+        const uint8_t* __restrict__ d_prefix232, // 232 bytes
+        unsigned long long* d_iter_count,
                              u64 nonce_start,
                              int nonce_count,
                              u32* __restrict__ d_hashes)
