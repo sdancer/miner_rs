@@ -717,13 +717,13 @@ void solve_nonce_range_fused(
         u64 d_found_nonce;
         u32 d_found_u32_at_228;
 
-        fused_blake3_hash_and_detect(
-                sh_seed, 
-                tileC,
-                &d_found_nonce,
-                &d_found_u32_at_228,
-                seed
-                );
+        //fused_blake3_hash_and_detect(
+        //        sh_seed, 
+        //        tileC,
+        //        &d_found_nonce,
+        //        &d_found_u32_at_228,
+        //        seed
+        //        );
     }
 }
 
