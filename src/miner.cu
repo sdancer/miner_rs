@@ -473,7 +473,7 @@ void solve_nonce_range_fused(const uint8_t* __restrict__ d_prefix232, // 232 byt
 
                 u32 flags = 0;
                 if (blk == 0)     flags |= CHUNK_START;
-                if (blk == 15)    flags |= (CHUNK_END | ROOT);
+                if (blk == 15)    flags |= (CHUNK_END );
 
                 g_compress(cv, m, 0ULL, 64u, flags, st);
 

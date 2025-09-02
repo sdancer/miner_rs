@@ -61,10 +61,22 @@ pub fn test_cpu_cv_vs_gpu_zero() {
 
 fn main() -> Result<(), DriverError> {
 
-    let x = cpu_ref::calculate_matmul(&[0u8;240]);
-    println!("matmul seed 0: {:?}", &x[..32]);
- 
+    let seed = [0u8; 240];
 
+    // 1) Just show first 32 elements of the matmul (as before)
+    let x = cpu_ref::calculate_matmul(&seed); // Vec<i32>
+    println!("matmul seed 0: {:?}", &x[..32]);
+
+    // Serialize i32s to little-endian bytes
+    let mut buf = Vec::with_capacity(seed.len() + x.len() * 4);
+    buf.extend_from_slice(&seed);
+    for v in &x {
+        buf.extend_from_slice(&v.to_le_bytes());
+    }
+
+    let h = blake3::hash(&buf);
+    println!("seed||matmul BLAKE3 = {}", h.to_hex());
+ 
     let start = std::time::Instant::now();
 
     let opts = CompileOptions {
