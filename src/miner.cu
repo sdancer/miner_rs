@@ -473,9 +473,9 @@ void solve_nonce_range_fused(const uint8_t* __restrict__ d_prefix232, // 232 byt
 
                 u32 flags = 0;
                 if (blk == 0)     flags |= CHUNK_START;
-                if (blk == 15)    flags |= (CHUNK_END );
+                if (blk == 15)    flags |= (CHUNK_END | ROOT);
 
-                g_compress(cv, m, 0ULL, 64u, flags, st);
+                g_compress(cv, m, blk, 64u, flags, st);
 
                 // next CV = st[0..7] (feed-forwarded low half)
                 #pragma unroll
