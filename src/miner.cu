@@ -498,7 +498,7 @@ void solve_nonce_range_fused(
             }
         }
 
-     //   __syncthreads(); // ensure (0,0) done before next seed iteration
+        __syncthreads(); // ensure (0,0) done before next seed iteration
     }
 }
 
