@@ -526,48 +526,79 @@ void solve_nonce_range_fused(
 
             // 16-wide block (4×DP4A) for maximal ILP
             for (; kk + 15 < tile; kk += 16) {
-                // Load 4×uint32 (16 bytes) of A as four 4-tuples
-                uint32_t a_vec1 = *reinterpret_cast<const uint32_t*>(As + (size_t)i*TILE_K + kk + 0);
-                uint32_t a_vec2 = *reinterpret_cast<const uint32_t*>(As + (size_t)i*TILE_K + kk + 4);
-                uint32_t a_vec3 = *reinterpret_cast<const uint32_t*>(As + (size_t)i*TILE_K + kk + 8);
-                uint32_t a_vec4 = *reinterpret_cast<const uint32_t*>(As + (size_t)i*TILE_K + kk + 12);
 
-                auto pack4 = [](uint32_t r)->int {
-                    int a0 = (int)((r >>  0) & 0xFF) - 128;
-                    int a1 = (int)((r >>  8) & 0xFF) - 128;
-                    int a2 = (int)((r >> 16) & 0xFF) - 128;
-                    int a3 = (int)((r >> 24) & 0xFF) - 128;
-                    return (a0 & 0xFF) | ((a1 & 0xFF) << 8) | ((a2 & 0xFF) << 16) | ((a3 & 0xFF) << 24);
-                };
+            // Load A values - four 4-element chunks (64 bytes total)
+            uint4 a_vec_chunk1 = *reinterpret_cast<const uint4*>(As + (size_t)i*TILE_K + kk);
+            uint4 a_vec_chunk2 = *reinterpret_cast<const uint4*>(As + (size_t)i*TILE_K + kk + 4);
+            uint4 a_vec_chunk3 = *reinterpret_cast<const uint4*>(As + (size_t)i*TILE_K + kk + 8);
+            uint4 a_vec_chunk4 = *reinterpret_cast<const uint4*>(As + (size_t)i*TILE_K + kk + 12);
 
-                int a_p1 = pack4(a_vec1);
-                int a_p2 = pack4(a_vec2);
-                int a_p3 = pack4(a_vec3);
-                int a_p4 = pack4(a_vec4);
+            // Process first 4-element chunk
+            uint32_t a_vec1 = a_vec_chunk1.x;
+            int a0 = (int)((a_vec1 >>  0) & 0xFF) - 128;
+            int a1 = (int)((a_vec1 >>  8) & 0xFF) - 128;
+            int a2 = (int)((a_vec1 >> 16) & 0xFF) - 128;
+            int a3 = (int)((a_vec1 >> 24) & 0xFF) - 128;
+            int a_packed1 = (a0 & 0xFF) | ((a1 & 0xFF) << 8) | ((a2 & 0xFF) << 16) | ((a3 & 0xFF) << 24);
 
-                // Load B as 16 separate int8, then pack in 4-tuples
-                #define B_AT(off) ((int)((int8_t)Bs[(size_t)(kk + (off)) * 16 + j]))
-                int b0=B_AT(0),  b1=B_AT(1),  b2=B_AT(2),  b3=B_AT(3);
-                int b4=B_AT(4),  b5=B_AT(5),  b6=B_AT(6),  b7=B_AT(7);
-                int b8=B_AT(8),  b9=B_AT(9),  b10=B_AT(10), b11=B_AT(11);
-                int b12=B_AT(12),b13=B_AT(13),b14=B_AT(14), b15=B_AT(15);
-                #undef B_AT
+            // Process second 4-element chunk
+            uint32_t a_vec2 = a_vec_chunk2.x;
+            int a4 = (int)((a_vec2 >>  0) & 0xFF) - 128;
+            int a5 = (int)((a_vec2 >>  8) & 0xFF) - 128;
+            int a6 = (int)((a_vec2 >> 16) & 0xFF) - 128;
+            int a7 = (int)((a_vec2 >> 24) & 0xFF) - 128;
+            int a_packed2 = (a4 & 0xFF) | ((a5 & 0xFF) << 8) | ((a6 & 0xFF) << 16) | ((a7 & 0xFF) << 24);
 
-                int b_p1 = (b0 & 0xFF) | ((b1 & 0xFF) << 8) | ((b2 & 0xFF) << 16) | ((b3 & 0xFF) << 24);
-                int b_p2 = (b4 & 0xFF) | ((b5 & 0xFF) << 8) | ((b6 & 0xFF) << 16) | ((b7 & 0xFF) << 24);
-                int b_p3 = (b8 & 0xFF) | ((b9 & 0xFF) << 8) | ((b10 & 0xFF) << 16) | ((b11 & 0xFF) << 24);
-                int b_p4 = (b12 & 0xFF) | ((b13 & 0xFF) << 8) | ((b14 & 0xFF) << 16) | ((b15 & 0xFF) << 24);
+            // Process third 4-element chunk
+            uint32_t a_vec3 = a_vec_chunk3.x;
+            int a8 = (int)((a_vec3 >>  0) & 0xFF) - 128;
+            int a9 = (int)((a_vec3 >>  8) & 0xFF) - 128;
+            int a10 = (int)((a_vec3 >> 16) & 0xFF) - 128;
+            int a11 = (int)((a_vec3 >> 24) & 0xFF) - 128;
+            int a_packed3 = (a8 & 0xFF) | ((a9 & 0xFF) << 8) | ((a10 & 0xFF) << 16) | ((a11 & 0xFF) << 24);
 
-                sum_b += (b0 + b1 + b2 + b3 +
-                          b4 + b5 + b6 + b7 +
-                          b8 + b9 + b10 + b11 +
-                          b12 + b13 + b14 + b15);
+            // Process fourth 4-element chunk
+            uint32_t a_vec4 = a_vec_chunk4.x;
+            int a12 = (int)((a_vec4 >>  0) & 0xFF) - 128;
+            int a13 = (int)((a_vec4 >>  8) & 0xFF) - 128;
+            int a14 = (int)((a_vec4 >> 16) & 0xFF) - 128;
+            int a15 = (int)((a_vec4 >> 24) & 0xFF) - 128;
+            int a_packed4 = (a12 & 0xFF) | ((a13 & 0xFF) << 8) | ((a14 & 0xFF) << 16) | ((a15 & 0xFF) << 24);
 
-                acc = __dp4a(a_p1, b_p1, acc);
-                acc = __dp4a(a_p2, b_p2, acc);
-                acc = __dp4a(a_p3, b_p3, acc);
-                acc = __dp4a(a_p4, b_p4, acc);
-            }
+            // Load B values efficiently
+            int b0 = (int)((int8_t)Bs[(size_t)(kk + 0) * 16 + j]);
+            int b1 = (int)((int8_t)Bs[(size_t)(kk + 1) * 16 + j]);
+            int b2 = (int)((int8_t)Bs[(size_t)(kk + 2) * 16 + j]);
+            int b3 = (int)((int8_t)Bs[(size_t)(kk + 3) * 16 + j]);
+            int b_packed1 = (b0 & 0xFF) | ((b1 & 0xFF) << 8) | ((b2 & 0xFF) << 16) | ((b3 & 0xFF) << 24);
+
+            int b4 = (int)((int8_t)Bs[(size_t)(kk + 4) * 16 + j]);
+            int b5 = (int)((int8_t)Bs[(size_t)(kk + 5) * 16 + j]);
+            int b6 = (int)((int8_t)Bs[(size_t)(kk + 6) * 16 + j]);
+            int b7 = (int)((int8_t)Bs[(size_t)(kk + 7) * 16 + j]);
+            int b_packed2 = (b4 & 0xFF) | ((b5 & 0xFF) << 8) | ((b6 & 0xFF) << 16) | ((b7 & 0xFF) << 24);
+
+            int b8 = (int)((int8_t)Bs[(size_t)(kk + 8) * 16 + j]);
+            int b9 = (int)((int8_t)Bs[(size_t)(kk + 9) * 16 + j]);
+            int b10 = (int)((int8_t)Bs[(size_t)(kk + 10) * 16 + j]);
+            int b11 = (int)((int8_t)Bs[(size_t)(kk + 11) * 16 + j]);
+            int b_packed3 = (b8 & 0xFF) | ((b9 & 0xFF) << 8) | ((b10 & 0xFF) << 16) | ((b11 & 0xFF) << 24);
+
+            int b12 = (int)((int8_t)Bs[(size_t)(kk + 12) * 16 + j]);
+            int b13 = (int)((int8_t)Bs[(size_t)(kk + 13) * 16 + j]);
+            int b14 = (int)((int8_t)Bs[(size_t)(kk + 14) * 16 + j]);
+            int b15 = (int)((int8_t)Bs[(size_t)(kk + 15) * 16 + j]);
+            int b_packed4 = (b12 & 0xFF) | ((b13 & 0xFF) << 8) | ((b14 & 0xFF) << 16) | ((b15 & 0xFF) << 24);
+
+            // Accumulate sums
+            sum_b += b0 + b1 + b2 + b3 + b4 + b5 + b6 + b7 + b8 + b9 + b10 + b11 + b12 + b13 + b14 + b15;
+
+            // Quad DP4A operations for maximum throughput
+            acc = __dp4a(a_packed1, b_packed1, acc);
+            acc = __dp4a(a_packed2, b_packed2, acc);
+            acc = __dp4a(a_packed3, b_packed3, acc);
+            acc = __dp4a(a_packed4, b_packed4, acc);
+        }
 
             // 8-wide block (2×DP4A)
             for (; kk + 7 < tile; kk += 8) {
