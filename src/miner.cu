@@ -322,7 +322,17 @@ void solve_nonce_range_fused(const uint8_t* __restrict__ d_prefix232, // 232 byt
             store_le64(&sh_seed[232], nonce);
 
             compute_root_from_seed240(sh_seed, sh_root, sh_precv, sh_lwords, &sh_llen);
-        }
+
+            printf("llen: %d\n", llen);
+            for (int m = 0; m < 8; m++) {
+                 printf("%lx ", sh_root[m]);
+            }
+            printf("\n");
+            for (int m = 0; m < 8; m++) {
+                 printf("%lx ", sh_prevcv[m]);
+            }
+            printf("\n");
+          }
         __syncthreads();
 
         // --- Matmul 16xK by Kx16 with on-the-fly XOF using sh_root/sh_precv/sh_lwords ---
