@@ -121,7 +121,7 @@ fn main() -> Result<(), DriverError> {
     // Kernel expects block (16,16,1), grid (>=1 blocks). One block = one seed here.
     let cfg = LaunchConfig {
         block_dim: (16, 16, 1),
-        grid_dim: (256 << 3, 1, 1), //4096 << 3
+        grid_dim: (256 << 4, 1, 1), //4096 << 3
         // TILE_K = 256 in the kernel → shared = 16*TILE_K + TILE_K*16 bytes = 8192
         shared_mem_bytes: (16 * 256 + 256 * 16) as u32,
     };
