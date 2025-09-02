@@ -647,7 +647,8 @@ if (seed == 0) {
     int t = i * 16 + j;           // 0..255
     if (t < 64) d_hashes[t] = tileC[t];
 }
-__syncthreads(); // only if later code needs the guarantee
+__syncthreads();
+// only if later code needs the guarantee
 //        if (seed == 0) {
 //           for (int a = 0; a < 64; a++) {
 //               d_hashes[a] =  tileC[a];
