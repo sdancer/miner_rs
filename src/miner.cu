@@ -40,7 +40,7 @@ __constant__ const u32 g_IV[8] = {
 };
 
 
-#ifndef NEWGCOMP
+#ifdef NEWGCOMP
 __device__ __forceinline__ uint32_t g_rotr32(uint32_t v, int s) {
     return (v >> s) | (v << (32 - s));
 }
@@ -79,23 +79,6 @@ __device__ __forceinline__ void g_round_regs(
     GG(s1,  s6,  s11, s12, m10, m11);
     GG(s2,  s7,  s8,  s13, m12, m13);
     GG(s3,  s4,  s9,  s14, m14, m15);
-}
-
-__device__ __forceinline__ void g_permute_regs(
-    u32 &m0,  u32 &m1,  u32 &m2,  u32 &m3,
-    u32 &m4,  u32 &m5,  u32 &m6,  u32 &m7,
-    u32 &m8,  u32 &m9,  u32 &m10, u32 &m11,
-    u32 &m12, u32 &m13, u32 &m14, u32 &m15)
-{
-    // BLAKE3 message permutation:
-    // [2,6,3,10,7,0,4,13,1,11,12,5,9,14,15,8]
-    u32 t0=m0, t1=m1, t2=m2, t3=m3, t4=m4, t5=m5, t6=m6, t7=m7;
-    u32 t8=m8, t9=m9, t10=m10, t11=m11, t12=m12, t13=m13, t14=m14, t15=m15;
-
-    m0  = t2;   m1  = t6;   m2  = t3;   m3  = t10;
-    m4  = t7;   m5  = t0;   m6  = t4;   m7  = t13;
-    m8  = t1;   m9  = t11;  m10 = t12;  m11 = t5;
-    m12 = t9;   m13 = t14;  m14 = t15;  m15 = t8;
 }
 
 __device__ __forceinline__ void g_compress(
@@ -159,8 +142,6 @@ __device__ __forceinline__ void g_compress(
     s0  ^= s8;   s1  ^= s9;   s2  ^= s10;  s3  ^= s11;
     s4  ^= s12;  s5  ^= s13;  s6  ^= s14;  s7  ^= s15;
 
-    s8  ^= cv0;  s9  ^= cv1;  s10 ^= cv2;  s11 ^= cv3;
-    s12 ^= cv4;  s13 ^= cv5;  s14 ^= cv6;  s15 ^= cv7;
 
     // ---- Write out ----
     state_out[0]=s0;  state_out[1]=s1;   state_out[2]=s2;   state_out[3]=s3;
