@@ -1,6 +1,6 @@
 use cudarc::driver::{CudaContext, DriverError, LaunchConfig, PushKernelArg};
 
-const PTX_SRC: &str = include_str!("miner.cu");
+const PTX_SRC: &str = include_str!("../src/miner.cu");
 
 use cudarc::nvrtc::CompileOptions;
 
