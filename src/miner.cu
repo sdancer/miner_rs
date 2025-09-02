@@ -310,10 +310,6 @@ __device__ inline void xof_emit_words(
     for (int w=0; w<8; ++w) dstw[8+w] = out[8+w] ^ precv[w];
 }
 
-#ifndef TILE_K
-#define TILE_K 256  // multiple of 64 and 4
-#endif
-
 
 // Helpers
 __device__ __forceinline__ void store_le64(uint8_t* dst, u64 x) {
@@ -365,198 +361,267 @@ void compute_root_from_seed240(const uint8_t* __restrict__ seed240,
     for (int w = 0; w < 8; ++w) out_root[w] = cv[w];
 }
 
-// -----------------------------------------------------------------------------
-// One kernel does everything for a range of nonces.
-// Grid:  grid.x = #seeds (or any >=1, kernel loops by stride), block = (16,16)
-// Smem:  dynamic = (16*TILE_K + TILE_K*16) bytes
-// Args:
-//   d_prefix232 : same 232B prefix for all seeds
-//   nonce_start : starting 64-bit nonce (little-endian written into bytes 232..239)
-//   nonce_count : number of seeds (one 16x16 output per nonce)
-//   d_C         : outputs [nonce_count][16][16] int32
-// -----------------------------------------------------------------------------
+
+
+
+
+// ---- tune this for K=50240; must be multiple of 64 and divide K exactly ----
 #ifndef TILE_K
-#define TILE_K 256
+#define TILE_K 320  // 50,240 / 320 = 157 tiles (no tails)
 #endif
+static_assert((TILE_K % 64) == 0, "TILE_K must be multiple of 64");
+static_assert((50240 % TILE_K) == 0, "TILE_K must divide K");
 
-
-
-// Simple cp.async wrapper: copy 16B from gmem to smem (assumes aligned)
-__device__ __forceinline__ void cp_async_16(void* smem_ptr, const void* gmem_ptr) {
-    unsigned smem = static_cast<unsigned>(__cvta_generic_to_shared(smem_ptr));          // 32-bit
-    unsigned long long gmem = (unsigned long long)__cvta_generic_to_global(gmem_ptr);   // 64-bit
-    asm volatile("cp.async.ca.shared.global [%0], [%1], 16;\n" :: "r"(smem), "l"(gmem));
-}
-
-
-// ====== helpers (place near the top, reuse your g_compress/xof helpers) ======
+// Pack helpers (same as before)
 __device__ __forceinline__ int pack4_sub128(uint8_t b0, uint8_t b1, uint8_t b2, uint8_t b3) {
-    char4 v;
-    v.x = (char)((int)b0 - 128);
-    v.y = (char)((int)b1 - 128);
-    v.z = (char)((int)b2 - 128);
-    v.w = (char)((int)b3 - 128);
+    char4 v; v.x=(char)((int)b0-128); v.y=(char)((int)b1-128); v.z=(char)((int)b2-128); v.w=(char)((int)b3-128);
     return *reinterpret_cast<int*>(&v);
 }
-
 __device__ __forceinline__ int pack4_i8(uint8_t b0, uint8_t b1, uint8_t b2, uint8_t b3) {
-    char4 v; v.x = (char)b0; v.y = (char)b1; v.z = (char)b2; v.w = (char)b3;
+    char4 v; v.x=(char)b0; v.y=(char)b1; v.z=(char)b2; v.w=(char)b3;
     return *reinterpret_cast<int*>(&v);
 }
 
-#define TILE_K 1024   // 4090: 32*TILE_K bytes of smem; 1024 => 32 KiB per block (comfortable)
+__device__ __forceinline__ int lane_id() {
+    return (int)(threadIdx.x & 31);
+}
+__device__ __forceinline__ int warp_id() {
+    int linear = threadIdx.y * blockDim.x + threadIdx.x;
+    return linear >> 5;
+}
 
-// ================================== KERNEL ===================================
 extern "C" __global__
-__launch_bounds__(256, 2)
+__launch_bounds__(256, 2)  // 8 warps/block; many blocks/SM on 4090
 void solve_nonce_range_fused(
-        const uint8_t* __restrict__ d_prefix232, // 232 bytes
+        const uint8_t* __restrict__ d_prefix232,
         unsigned long long* d_iter_count,
         u64 nonce_start,
         int nonce_count,
-        u32* __restrict__ d_hashes /* optional: debug slot */)
+        u32* __restrict__ d_hashes /* optional debug */)
 {
-    const int i = threadIdx.y;   // 0..15
-    const int j = threadIdx.x;   // 0..15
-    if (i >= 16 || j >= 16) return;
+    // Thread mapping: 8 warps/block.
+    // Warp 0: produce A tiles, warp 1: produce B tiles (+ column sums)
+    // Warps 2..7: consumers (DP4A compute), 192 threads total; they cover 256 outputs by striding.
+    const int wid  = warp_id();
+    const int lane = lane_id();
 
-    // ---- Small shared state (persists across tiles) ----
+    // Small shared state (same block lifetime)
     __shared__ uint8_t sh_prefix[232];
     __shared__ uint8_t sh_seed[240];
     __shared__ u32 sh_root[8];
     __shared__ u32 sh_precv[8];
     __shared__ u32 sh_lwords[16];
-    __shared__ uint8_t sh_llen; // 48 for the 4th block of 240B
-
-    // Optional: keep C tile in shared (useful if you hash on-chip again)
-    __shared__ int32_t tileC[16 * 16];
-
-    if (i == 0 && j == 0) {
+    __shared__ uint8_t sh_llen; // 48
+    if (threadIdx.x == 0 && threadIdx.y == 0) {
         #pragma unroll
         for (int t = 0; t < 232; ++t) sh_prefix[t] = d_prefix232[t];
     }
     __syncthreads();
 
-    // ---- Dynamic shared (A_packed + small pad + B_packed) ----
-    // Each pack is int32 where lanes are 4×int8.
-    extern __shared__ __align__(16) uint8_t smem[];
-    int32_t* As4 = reinterpret_cast<int32_t*>(smem);                                     // [16 rows][TILE_K/4]
-    int32_t* Bs4 = reinterpret_cast<int32_t*>(smem + (size_t)16 * (TILE_K/4) * 4 + 64);  // [TILE_K/4 groups][16 cols]
-
+    // Geometry constants
     constexpr int K            = 50240;
-    constexpr int A_BYTES      = 16 * K;           // 803,840
-    constexpr int A_BLOCKS     = A_BYTES / 64;     // 12,560
-    constexpr int B_BASE_BLOCK = A_BLOCKS;         // 12,560
+    constexpr int A_BYTES      = 16 * K;        // 803,840
+    constexpr int A_BLOCKS     = A_BYTES / 64;  // 12,560
+    constexpr int B_BASE_BLOCK = A_BLOCKS;      // 12,560
+    constexpr int GROUPS       = TILE_K / 4;    // DP4A groups per tile (80 for 320)
+    constexpr int A_BLKS_PER_TILE = TILE_K / 64; // 5
 
-    const int strideA = (TILE_K >> 2);   // int32 per row
-    const int strideB = 16;              // int32 per k-group: one per column
+    // Double-buffered shared tiles (static shared to avoid launch mistakes)
+    __shared__ int32_t As4_buf[2][16 * (TILE_K/4)];   // [buf][row * (TILE_K/4) + g]
+    __shared__ int32_t Bs4_buf[2][(TILE_K/4) * 16];   // [buf][g * 16 + col]
+    __shared__ int     colsum_total[16];              // sum of B over full K per column
+    __shared__ int     ready[2];                      // producer->consumer handoff for buffers
+    __shared__ int32_t shC_dbg;                       // tiny debug
 
-    const int thread_id     = threadIdx.y * blockDim.x + threadIdx.x; // 0..255
-    const int total_threads = blockDim.x * blockDim.y;
+    if (threadIdx.x == 0 && threadIdx.y == 0) {
+        #pragma unroll
+        for (int j = 0; j < 16; ++j) colsum_total[j] = 0;
+        ready[0] = 0; ready[1] = 0;
+        shC_dbg = 0;
+    }
+    __syncthreads();
+
+    // Consumers map: 192 compute threads cover 256 outputs by striding
+    const bool is_consumer = (wid >= 2);
+    const int  consumer_tid = is_consumer ? ((wid - 2) * 32 + lane) : -1;
 
     for (int seed = blockIdx.x; seed < nonce_count; seed += gridDim.x) {
-        if (i == 0 && j == 0) atomicAdd(d_iter_count, 1ULL);
-
-        // Build seed & derive xof params once per seed
-        if (i == 0 && j == 0) {
+        // Build seed & derive XOF params
+        if (threadIdx.x == 0 && threadIdx.y == 0) {
+            atomicAdd(d_iter_count, 1ULL);
             #pragma unroll
             for (int t = 0; t < 232; ++t) sh_seed[t] = sh_prefix[t];
             const u64 nonce = nonce_start + (u64)seed;
             #pragma unroll
             for (int b = 0; b < 8; ++b) sh_seed[232 + b] = (uint8_t)(nonce >> (8*b));
-
             compute_root_from_seed240(sh_seed, sh_root, sh_precv, sh_lwords, &sh_llen);
         }
         __syncthreads();
-
-        int acc   = 0;
-        int sum_b = 0;                 // we’ll add (sum_b << 7) at the end
         const u32 llen = (u32)sh_llen;
 
-        for (int k0 = 0; k0 < K; k0 += TILE_K) {
-            const int tile   = min(TILE_K, K - k0);
-            const int groups = (tile + 3) >> 2;  // # of 4-k packs
-
-            // -------------------- 1) PRE-PACK A (u8->i8, bias once) --------------------
-            // A row r: produce (tile bytes) via XOF in 64B chunks → write as int32 packs.
-            const int a_blocks_per_row = (tile + 63) / 64;
-            for (int lin = thread_id; lin < 16 * a_blocks_per_row; lin += total_threads) {
-                const int r       = lin / a_blocks_per_row;      // 0..15
-                const int rb      = lin % a_blocks_per_row;      // 64B-block within row
-                const int kk_base = rb * 64;
-                if (kk_base >= tile) continue;
-
-                u32 words[16];
-                const uint32_t blkA = (uint32_t)(r * (K/64) + (k0/64) + rb);
-                xof_emit_words(blkA, sh_root, sh_precv, sh_lwords, llen, words);
-                const uint8_t* w = reinterpret_cast<const uint8_t*>(words);
-
+        // Preload tile 0 (buffer 0) before loop
+        if (wid == 0) {
+            // A producer: lanes 0..15 -> rows
+            if (lane < 16) {
+                const int r = lane;
                 #pragma unroll
-                for (int q = 0; q < 16; ++q) {
-                    const int gidx = (kk_base >> 2) + q;
-                    if (gidx >= groups) break;
-
-                    // guard tail per byte
-                    const int b0k = kk_base + 4*q + 0;
-                    const int b1k = kk_base + 4*q + 1;
-                    const int b2k = kk_base + 4*q + 2;
-                    const int b3k = kk_base + 4*q + 3;
-
-                    uint8_t b0 = (b0k < tile) ? w[4*q + 0] : 0;
-                    uint8_t b1 = (b1k < tile) ? w[4*q + 1] : 0;
-                    uint8_t b2 = (b2k < tile) ? w[4*q + 2] : 0;
-                    uint8_t b3 = (b3k < tile) ? w[4*q + 3] : 0;
-
-                    As4[r * strideA + gidx] = pack4_sub128(b0, b1, b2, b3);
+                for (int rb = 0; rb < A_BLKS_PER_TILE; ++rb) { // 5
+                    const uint32_t blkA = (uint32_t)(r * (K/64) + rb);
+                    u32 words[16];
+                    xof_emit_words(blkA, sh_root, sh_precv, sh_lwords, llen, words);
+                    const uint8_t* w = reinterpret_cast<const uint8_t*>(words);
+                    #pragma unroll
+                    for (int q = 0; q < 16; ++q) {
+                        const int gidx = rb * 16 + q; // 0..79
+                        As4_buf[0][r * (TILE_K/4) + gidx] =
+                            pack4_sub128(w[4*q + 0], w[4*q + 1], w[4*q + 2], w[4*q + 3]);
+                    }
                 }
             }
-
-            // -------------------- 2) PRE-PACK B (transpose+pack by k-groups) -----------
-            for (int gb = thread_id; gb < groups; gb += total_threads) {
-                const int kk_base = gb * 4;
-                const uint32_t blkB = (uint32_t)(B_BASE_BLOCK + ((k0 + kk_base) >> 2));
-                u32 words[16];
-                xof_emit_words(blkB, sh_root, sh_precv, sh_lwords, llen, words);
-                const uint8_t* w = reinterpret_cast<const uint8_t*>(words);
-
-                // 64B is 4 “rows” of 16 bytes each → kk, kk+1, kk+2, kk+3
+        } else if (wid == 1) {
+            // B producer: lanes 0..15 -> columns; also accumulate column sums for full K
+            int local_sum[16]; #pragma unroll
+            for (int j = 0; j < 16; ++j) local_sum[j] = 0;
+            if (lane < 16) {
+                const int j = lane;
                 #pragma unroll
-                for (int jj = 0; jj < 16; ++jj) {
-                    const bool k0ok = (kk_base + 0) < tile;
-                    const bool k1ok = (kk_base + 1) < tile;
-                    const bool k2ok = (kk_base + 2) < tile;
-                    const bool k3ok = (kk_base + 3) < tile;
-
-                    uint8_t b0 = k0ok ? w[0*16 + jj] : 0;
-                    uint8_t b1 = k1ok ? w[1*16 + jj] : 0;
-                    uint8_t b2 = k2ok ? w[2*16 + jj] : 0;
-                    uint8_t b3 = k3ok ? w[3*16 + jj] : 0;
-
-                    Bs4[gb * strideB + jj] = pack4_i8(b0, b1, b2, b3);
+                for (int gb = 0; gb < GROUPS; ++gb) { // 80
+                    const uint32_t blkB = (uint32_t)(B_BASE_BLOCK + gb);
+                    u32 words[16];
+                    xof_emit_words(blkB, sh_root, sh_precv, sh_lwords, llen, words);
+                    const uint8_t* w = reinterpret_cast<const uint8_t*>(words);
+                    // kk..kk+3 on rows; 16 columns across j
+                    const uint8_t b0 = w[0*16 + j];
+                    const uint8_t b1 = w[1*16 + j];
+                    const uint8_t b2 = w[2*16 + j];
+                    const uint8_t b3 = w[3*16 + j];
+                    Bs4_buf[0][gb * 16 + j] = pack4_i8(b0, b1, b2, b3);
+                    local_sum[j] += (int)( (int8_t)b0 + (int8_t)b1 + (int8_t)b2 + (int8_t)b3 );
                 }
             }
-            __syncthreads();
-
-            // -------------------- 3) COMPUTE (pure DP4A) ------------------------------
-            const int ONES = 0x01010101;
-            #pragma unroll 1
-            for (int g = 0; g < groups; ++g) {
-                const int a_p = As4[i * strideA + g];
-                const int b_p = Bs4[g * strideB + j];
-                acc   = __dp4a(a_p, b_p, acc);      // 4 MACs
-                sum_b = __dp4a(ONES, b_p, sum_b);   // sum 4 int8s in one op
+            // Reduce per warp and update shared totals
+            unsigned mask = 0xffffffffu;
+            if (lane < 16) {
+                #pragma unroll
+                for (int j = 0; j < 16; ++j) {
+                    int v = local_sum[j];
+                    v += __shfl_down_sync(mask, v, 16);
+                    if (lane == 0) atomicAdd(&colsum_total[j], v);
+                }
             }
-            __syncthreads();
         }
-
-        // Undo A’s (-128) bias: add 128 * sum_b
-        acc += (sum_b << 7);
-
-        tileC[i * 16 + j] = acc;
+        __syncthreads();
+        if (threadIdx.x == 0 && threadIdx.y == 0) { ready[0] = 1; __threadfence_block(); }
         __syncthreads();
 
-        // tiny debug write to prove life
-        if (i == 0 && j == 0 && seed == 0 && d_hashes) d_hashes[0] = (u32)tileC[0];
+        // Consumer accumulators (up to two outputs per thread)
+        int acc0 = 0, acc1 = 0;
+        int idx0 = -1, idx1 = -1;
+        int i0=0,j0=0,i1=0,j1=0;
+
+        if (is_consumer) {
+            idx0 = consumer_tid;               // 0..191
+            idx1 = consumer_tid + 192;         // 192..383 (valid if < 256)
+            if (idx0 < 256) { i0 = idx0 / 16; j0 = idx0 % 16; }
+            if (idx1 < 256) { i1 = idx1 / 16; j1 = idx1 % 16; }
+        }
+
+        // Main K tiles
+        const int NTILES = K / TILE_K; // 157
+        int cur = 0, nxt = 1;
+
+        for (int t = 0; t < NTILES; ++t) {
+            // Producers build "next" while consumers compute "cur"
+            if (wid == 0 && (t + 1 < NTILES)) {
+                if (lane < 16) {
+                    const int r = lane;
+                    const int base_blk = (t+1) * A_BLKS_PER_TILE;
+                    #pragma unroll
+                    for (int rb = 0; rb < A_BLKS_PER_TILE; ++rb) {
+                        const uint32_t blkA = (uint32_t)(r * (K/64) + base_blk + rb);
+                        u32 words[16];
+                        xof_emit_words(blkA, sh_root, sh_precv, sh_lwords, llen, words);
+                        const uint8_t* w = reinterpret_cast<const uint8_t*>(words);
+                        #pragma unroll
+                        for (int q = 0; q < 16; ++q) {
+                            const int gidx = rb * 16 + q;
+                            As4_buf[nxt][r * (TILE_K/4) + gidx] =
+                                pack4_sub128(w[4*q + 0], w[4*q + 1], w[4*q + 2], w[4*q + 3]);
+                        }
+                    }
+                }
+            } else if (wid == 1 && (t + 1 < NTILES)) {
+                int local_sum[16]; #pragma unroll
+                for (int j = 0; j < 16; ++j) local_sum[j] = 0;
+                if (lane < 16) {
+                    const int j = lane;
+                    const int base_gb = (t+1) * GROUPS;
+                    #pragma unroll
+                    for (int gb = 0; gb < GROUPS; ++gb) {
+                        const uint32_t blkB = (uint32_t)(B_BASE_BLOCK + base_gb + gb);
+                        u32 words[16];
+                        xof_emit_words(blkB, sh_root, sh_precv, sh_lwords, llen, words);
+                        const uint8_t* w = reinterpret_cast<const uint8_t*>(words);
+                        const uint8_t b0 = w[0*16 + j];
+                        const uint8_t b1 = w[1*16 + j];
+                        const uint8_t b2 = w[2*16 + j];
+                        const uint8_t b3 = w[3*16 + j];
+                        Bs4_buf[nxt][gb * 16 + j] = pack4_i8(b0, b1, b2, b3);
+                        local_sum[j] += (int)( (int8_t)b0 + (int8_t)b1 + (int8_t)b2 + (int8_t)b3 );
+                    }
+                }
+                unsigned mask = 0xffffffffu;
+                if (lane < 16) {
+                    #pragma unroll
+                    for (int j = 0; j < 16; ++j) {
+                        int v = local_sum[j];
+                        v += __shfl_down_sync(mask, v, 16);
+                        if (lane == 0) atomicAdd(&colsum_total[j], v);
+                    }
+                }
+            }
+
+            // Consumers compute on 'cur'
+            if (is_consumer) {
+                const int strideA = (TILE_K >> 2);
+                const int strideB = 16;
+                #pragma unroll 1
+                for (int g = 0; g < GROUPS; ++g) {
+                    if (idx0 < 256) {
+                        const int a_p = As4_buf[cur][i0 * strideA + g];
+                        const int b_p = Bs4_buf[cur][g * strideB + j0];
+                        acc0 = __dp4a(a_p, b_p, acc0);
+                    }
+                    if (idx1 < 256) {
+                        const int a_p = As4_buf[cur][i1 * strideA + g];
+                        const int b_p = Bs4_buf[cur][g * strideB + j1];
+                        acc1 = __dp4a(a_p, b_p, acc1);
+                    }
+                }
+            }
+
+            __syncthreads();  // rendezvous for buffer swap
+            if (threadIdx.x == 0 && threadIdx.y == 0 && (t + 1 < NTILES)) {
+                ready[nxt] = 1;   // (kept for clarity; not polled in this variant)
+                ready[cur] = 0;
+            }
+            __syncthreads();
+            int tmp = cur; cur = nxt; nxt = tmp;
+        }
+
+        // Apply bias once: acc += 128 * sum_b(col)
+        if (is_consumer) {
+            if (idx0 < 256) acc0 += (colsum_total[j0] << 7);
+            if (idx1 < 256) acc1 += (colsum_total[j1] << 7);
+        }
+
+        // Optional tiny debug write
+        if (threadIdx.x == 0 && threadIdx.y == 0 && seed == 0 && d_hashes) {
+            shC_dbg = acc0;
+            __threadfence_block();
+            d_hashes[0] = (u32)shC_dbg;
+        }
+        __syncthreads();
     }
 }
 
