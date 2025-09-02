@@ -6,11 +6,13 @@ fn main() {
         .args([
             "-arch=sm_89",
             "-O3",
-            "-Xptxas", "-O3,-v",
+            "-Xptxas",
+            "-O3,-v",
             "--use_fast_math",
             "src/miner.cu",
             "-cubin",
-            "-o", "miner.cubin",
+            "-o",
+            "miner.cubin",
         ])
         .status()
         .expect("Failed to invoke nvcc");

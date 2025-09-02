@@ -66,7 +66,6 @@ fn main() -> Result<(), DriverError> {
 
     let start = std::time::Instant::now();
 
-
     // 1) Just show first 32 elements of the matmul (as before)
     let x = cpu_ref::calculate_matmul(&seed); // Vec<i32>
     println!("matmul seed 0: {:?}", &x[..32]);
@@ -95,13 +94,11 @@ fn main() -> Result<(), DriverError> {
     let stream = ctx.default_stream();
     println!("Built in {:?}", start.elapsed());
 
-
     // let module = ctx.load_module(ptx)?;
     let module = ctx.load_module(Ptx::from_file("./miner.cubin"))?;
     let f = module.load_function("solve_nonce_range_fused")?;
 
     println!("Loaded in {:?}", start.elapsed());
-
 
     let mut h_counter = [0u64];
     let d_counter = stream.memcpy_stod(&h_counter)?;
@@ -126,17 +123,17 @@ fn main() -> Result<(), DriverError> {
     // --- Launch config ---
     // Kernel expects block (16,16,1), grid (>=1 blocks). One block = one seed here.
     let tile_k: u32 = 1024;
-let smem_bytes: u32 = 32 * tile_k + 64;
-let grid_x = 1024;
-let grid = (grid_x as u32, 1, 1);
-let block = (16u32, 16u32, 1u32);
+    let smem_bytes: u32 = 32 * tile_k + 64;
+    let grid_x = 1024;
+    let grid = (grid_x as u32, 1, 1);
+    let block = (16u32, 16u32, 1u32);
 
-let cfg = cudarc::driver::LaunchConfig {
-    grid_dim: grid,
-    block_dim: block,
-    shared_mem_bytes: smem_bytes,
-};
-    
+    let cfg = cudarc::driver::LaunchConfig {
+        grid_dim: grid,
+        block_dim: block,
+        shared_mem_bytes: smem_bytes,
+    };
+
     // --- Build args & launch ---
     let mut builder = stream.launch_builder(&f);
     // solve_nonce_range_fused(
@@ -158,8 +155,8 @@ let cfg = cudarc::driver::LaunchConfig {
     print_tensor_bytes_grid(&tensor_c_bytes);
     println!("Done in {:?}", ela);
 
-stream.memcpy_dtoh(&d_counter, &mut h_counter)?;
-println!("iterations = {}", h_counter[0]);
+    stream.memcpy_dtoh(&d_counter, &mut h_counter)?;
+    println!("iterations = {}", h_counter[0]);
     Ok(())
 }
 
