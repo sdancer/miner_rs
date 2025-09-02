@@ -98,7 +98,7 @@ __device__ __forceinline__ void g_permute_regs(
 __device__ __forceinline__ void g_compress(
     const u32 *__restrict__ chaining_value,  // cv[8]
     const u32 *__restrict__ block_words,     // m[16]
-    u64 counter,
+    u32 counter,
     u32 block_len,
     u32 flags,
     u32 *__restrict__ state_out)             // writes v[16]
@@ -112,7 +112,7 @@ __device__ __forceinline__ void g_compress(
     // Working state in 16 registers
     u32 s0=cv0, s1=cv1, s2=cv2, s3=cv3, s4=cv4, s5=cv5, s6=cv6, s7=cv7;
     u32 s8=g_IV[0], s9=g_IV[1], s10=g_IV[2], s11=g_IV[3];
-    u32 s12=(u32)counter, s13=(u32)(counter >> 32), s14=block_len, s15=flags;
+    u32 s12=(u32)counter, s13=0, s14=block_len, s15=flags;
 
     // ---- Load message into regs ----
     u32 m0 = block_words[0],  m1  = block_words[1];
