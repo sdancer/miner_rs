@@ -436,21 +436,21 @@ void solve_nonce_range_fused(
     for (int seed = blockIdx.x; seed < nonce_count; seed += gridDim.x) {
 
         // Thread (0,0) builds the 240B seed and computes root/preCV/lastWords
-        if (i == 0 && j == 0) {
-            atomicAdd(d_iter_count, 1ULL);
+        //if (i == 0 && j == 0) {
+        //    atomicAdd(d_iter_count, 1ULL);
 
-            // prefix[0..231]
-            #pragma unroll
-            for (int t = 0; t < 232; ++t) sh_seed[t] = sh_prefix[t];
+        //    // prefix[0..231]
+        //    #pragma unroll
+        //    for (int t = 0; t < 232; ++t) sh_seed[t] = sh_prefix[t];
 
-            // nonce (LE) into bytes 232..239
-            const u64 nonce = nonce_start + (u64)seed;
-            store_le64(&sh_seed[232], nonce);
+        //    // nonce (LE) into bytes 232..239
+        //    const u64 nonce = nonce_start + (u64)seed;
+        //    store_le64(&sh_seed[232], nonce);
 
-            // derive root/preCV/lastWords/lastLen
-            compute_root_from_seed240(sh_seed, sh_root, sh_precv, sh_lwords, &sh_llen);
-        }
-        __syncthreads();
+        //    // derive root/preCV/lastWords/lastLen
+        //    compute_root_from_seed240(sh_seed, sh_root, sh_precv, sh_lwords, &sh_llen);
+        //}
+        //__syncthreads();
 
         // --- Matmul 16xK by Kx16 with on-the-fly XOF using sh_root/sh_precv/sh_lwords ---
         constexpr int K            = 50240;
