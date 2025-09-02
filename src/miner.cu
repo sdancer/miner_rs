@@ -198,7 +198,7 @@ __device__ inline void xof_emit_words(
     u32 out[16];
 
     const uint64_t t = (uint64_t)blk;
-    printf("blk: %x\n", blk);
+    //printf("blk: %x\n", blk);
 
     const u32 flags = (CHUNK_END | ROOT);
     // g_compress writes 16 words to state; its low half is already lo^hi (root CV),
@@ -351,8 +351,6 @@ void solve_nonce_range_fused(const uint8_t* __restrict__ d_prefix232, // 232 byt
                 }
           }
         __syncthreads();
-
-        return;
 
         // --- Matmul 16xK by Kx16 with on-the-fly XOF using sh_root/sh_precv/sh_lwords ---
         constexpr int K = 50240;
