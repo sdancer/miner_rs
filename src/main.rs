@@ -96,8 +96,8 @@ fn main() -> Result<(), DriverError> {
     println!("Loaded in {:?}", start.elapsed());
 
 
-  let mut h_counter = [0u64];
-    let mut d_counter = stream.memcpy_stod(&h_counter)?;
+    let mut h_counter = [0u64];
+    let d_counter = stream.memcpy_stod(&h_counter)?;
 
     // --- Inputs/outputs ---
     // Prefix is 232 bytes (common), kernel appends 8B LE nonce at [232..239]
@@ -110,7 +110,7 @@ fn main() -> Result<(), DriverError> {
 
     // Nonce range: start=0, count=1 (single seed)
     let nonce_start: u64 = 0;
-    let nonce_count: i32 = 10000;
+    let nonce_count: i32 = 100000;
 
     println!("Copied in {:?}", start.elapsed());
 
