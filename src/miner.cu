@@ -643,12 +643,12 @@ void solve_nonce_range_fused(
         // if (i == 0 && j == 0) { ... g_compress over 16×64B of tileC ... }
         __syncthreads();
 
-        if (seed == 0) {
-           for (int a = 0; a < 64; a++) {
-               d_hashes[a] =  tileC[a];
-           }
-        }
-   __syncthreads();
+//        if (seed == 0) {
+//           for (int a = 0; a < 64; a++) {
+//               d_hashes[a] =  tileC[a];
+//           }
+//        }
+//   __syncthreads();
 
 
     }
