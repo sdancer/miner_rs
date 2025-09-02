@@ -509,7 +509,7 @@ void fused_blake3_hash_and_detect(
     // FUSION: Immediately check for solution without writing to global memory
     const uint8_t* h = reinterpret_cast<const uint8_t*>(final_hash);
     if ((h[0] == 0x00) && (h[1] == 0x00) && ((h[2] & 0xF0) == 0x00)) {
-        printf("some partial sol %lx\n", seed);
+        printf("some partial sol %lx\n", seed_n);
             // OPTIMIZATION: Vectorized nonce extraction (direct 64-bit load)
             const uint64_t* nonce_ptr = reinterpret_cast<const uint64_t*>(seed + 232);
             *d_found_nonce = *nonce_ptr;
