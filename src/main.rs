@@ -76,8 +76,6 @@ fn main() -> Result<(), DriverError> {
     let h = blake3::hash(&buf);
     println!("seed||matmul BLAKE3 = {}", h.to_hex());
 
-    let start = std::time::Instant::now();
-
     let opts = CompileOptions {
         arch: Some("compute_61"),
         include_paths: vec!["/usr/local/cuda/include".into(), "/opt/cuda/include".into()],
@@ -113,6 +111,8 @@ fn main() -> Result<(), DriverError> {
     let nonce_count: i32 = 500000;
 
     println!("Copied in {:?}", start.elapsed());
+
+    let start = std::time::Instant::now();
 
     // --- Launch config ---
     // Kernel expects block (16,16,1), grid (>=1 blocks). One block = one seed here.
