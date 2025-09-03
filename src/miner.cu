@@ -378,8 +378,7 @@ void compute_root_from_seed240(const uint8_t* __restrict__ seed240,
 #endif
 
 
-__global__
-// OPTIMIZATION: Let compiler choose optimal occupancy for Blake3 kernel
+__device__
 void fused_blake3_hash_and_detect(
     const uint8_t* __restrict__ d_seeds,   // 240B per item
     const int32_t* __restrict__ d_C,       // 256 i32 (1024B) per item
@@ -509,7 +508,7 @@ void fused_blake3_hash_and_detect(
     // FUSION: Immediately check for solution without writing to global memory
     const uint8_t* h = reinterpret_cast<const uint8_t*>(final_hash);
     if ((h[0] == 0x00) && (h[1] == 0x00) && ((h[2] & 0xF0) == 0x00)) {
-            printf("some partial sol %lx\n", seed_n);
+            //printf("some partial sol %lx\n", seed_n);
             // OPTIMIZATION: Vectorized nonce extraction (direct 64-bit load)
             const uint64_t* nonce_ptr = reinterpret_cast<const uint64_t*>(seed + 232);
             *d_found_nonce = *nonce_ptr;
