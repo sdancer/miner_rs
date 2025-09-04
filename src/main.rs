@@ -271,17 +271,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         builder.arg(&mut d_out);
 
         println!("{} launching ", dev_idx);
- 
+
         unsafe { builder.launch(cfg) }?;
 
         println!("{} launched ", dev_idx);
- 
+
         stream.synchronize()?;
 
         let ela = dev_start.elapsed();
 
         println!("{} ela: launched ", dev_idx);
- 
+
         runs.push(DevRun {
             ctx,
             d_prefix,
@@ -296,25 +296,23 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     println!("gathering results ");
- 
+
     // ---------- gather results ----------
     let mut total_iters: u64 = 0;
     for (i, run) in runs.iter_mut().enumerate() {
-    //let _ctx_guard = run.ctx.push_current()?; // or: run.ctx.push_current()?
-    let stream = run.ctx.default_stream();
+        //let _ctx_guard = run.ctx.push_current()?; // or: run.ctx.push_current()?
+        let stream = run.ctx.default_stream();
 
-    // Sync and copy with context bound
-    stream.synchronize()?;
-    stream
-        .memcpy_dtoh(&run.d_out, &mut run.out_host)
-        .map_err(|e| anyhow::anyhow!("[GPU {i}] dtoh d_out failed: {e}"))?;
-    stream
-        .memcpy_dtoh(&run.d_counter, &mut run.h_counter)
-        .map_err(|e| anyhow::anyhow!("[GPU {i}] dtoh counter failed: {e}"))?;
+        // Sync and copy with context bound
+        stream.synchronize()?;
+        stream
+            .memcpy_dtoh(&run.d_out, &mut run.out_host)
+            .map_err(|e| anyhow::anyhow!("[GPU {i}] dtoh d_out failed: {e}"))?;
+        stream
+            .memcpy_dtoh(&run.d_counter, &mut run.h_counter)
+            .map_err(|e| anyhow::anyhow!("[GPU {i}] dtoh counter failed: {e}"))?;
 
-        println!(
-            "\n[GPU {}] did read",
-                    , dev_idx);
+        println!("\n[GPU {i}] did read");
 
         total_iters += run.h_counter[0];
 
