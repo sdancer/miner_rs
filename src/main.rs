@@ -188,24 +188,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let mut runs: Vec<DevRun> = Vec::with_capacity(dev_count);
 
-    // kernel config: you had (16,16,1) and a large grid; keep that unless you change kernel semantics
-    let cfg = LaunchConfig {
-        block_dim: (16, 16, 1),
-        grid_dim: (256 << 6, 1, 1),
-        // TILE_K = 256 in kernel → shared = 16*TILE_K + TILE_K*16 = 8192
-        shared_mem_bytes: (16 * 256 + 256 * 16) as u32,
-    };
-
     // ---------- setup + launch per device ----------
     for dev_idx in 0..dev_count {
-        println!(
-            "[GPU {}] maxThreadsPerBlock={}",
-            dev_idx,
-            dev_attr(
-                dev_idx as i32,
-                CUdevice_attribute::CU_DEVICE_ATTRIBUTE_MAX_THREADS_PER_BLOCK
-            )
+        let max_threads = dev_attr(
+            dev_idx as i32,
+            CUdevice_attribute::CU_DEVICE_ATTRIBUTE_MAX_THREADS_PER_BLOCK,
         );
+        println!("[GPU {}] maxThreadsPerBlock={}", dev_idx, max_threads);
         println!(
             "[GPU {}] maxGridDimX={}",
             dev_idx,
@@ -222,6 +211,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 CUdevice_attribute::CU_DEVICE_ATTRIBUTE_MAX_SHARED_MEMORY_PER_BLOCK_OPTIN
             )
         );
+        let threads: u32 = if 256 << 6 > max_threads {
+            max_threads.try_into().unwrap()
+        } else {
+            256 << 6
+        };
+        let cfg = LaunchConfig {
+            block_dim: (16, 16, 1),
+            grid_dim: (threads, 1, 1),
+            // TILE_K = 256 in kernel → shared = 16*TILE_K + TILE_K*16 = 8192
+            shared_mem_bytes: (16 * 256 + 256 * 16) as u32,
+        };
+
         // per-device nonce slice
         let local_start = nonce_start_global + (dev_idx as u64) * (per as u64);
         // cap final device to not exceed total
