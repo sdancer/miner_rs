@@ -60,13 +60,34 @@ pub fn test_cpu_cv_vs_gpu_zero() {
 }
 
 //use cudarc::driver::{CudaContext, DriverError, LaunchConfig, PushKernelArg};
+use cudarc::driver::sys::CUdevice_attribute;
+use cudarc::driver::sys::cuDeviceGet;
+use cudarc::driver::sys::cuDeviceGetAttribute;
 use cudarc::driver::sys::{cuDeviceGetCount, cuInit};
+use std::collections::HashMap;
 use std::ffi::c_uint;
 use std::sync::Arc;
-
 // ... keep all your existing imports, helpers, and functions ...
-
-fn main() -> Result<(), DriverError> {
+fn get_device_cc(ordinal: i32) -> (i32, i32) {
+    unsafe {
+        let mut dev = 0;
+        let _ = cuDeviceGet(&mut dev as *mut _, ordinal);
+        let mut major = 0;
+        let mut minor = 0;
+        let _ = cuDeviceGetAttribute(
+            &mut major as *mut _,
+            CUdevice_attribute::CU_DEVICE_ATTRIBUTE_COMPUTE_CAPABILITY_MAJOR,
+            dev,
+        );
+        let _ = cuDeviceGetAttribute(
+            &mut minor as *mut _,
+            CUdevice_attribute::CU_DEVICE_ATTRIBUTE_COMPUTE_CAPABILITY_MINOR,
+            dev,
+        );
+        (major, minor)
+    }
+}
+fn main() -> Result<(), Box<dyn std::error::Error>> {
     // ---------- host precompute ----------
     let seed = [0u8; 240];
 
@@ -87,15 +108,47 @@ fn main() -> Result<(), DriverError> {
     }
 
     // ---------- compile PTX once ----------
-    let opts = CompileOptions {
-        arch: Some("compute_61"),
-        include_paths: vec!["/usr/local/cuda/include".into(), "/opt/cuda/include".into()],
-        ..Default::default()
-    };
-    let ptx = cudarc::nvrtc::compile_ptx_with_opts(PTX_SRC, opts).unwrap();
-    println!("Compilation succeeded in {:?}", start.elapsed());
+    unsafe { cuInit(0) };
+    let mut dev_count_i32: i32 = 0;
+    unsafe {
+        let _ = cuDeviceGetCount(&mut dev_count_i32 as *mut i32);
+    }
+    let dev_count = (dev_count_i32.max(0)) as usize;
+    println!("Found {} CUDA device(s).", dev_count);
 
-    // ---------- enumerate devices ----------
+    let mut archs: Vec<String> = Vec::new();
+    for i in 0..dev_count_i32 {
+        let (maj, min) = get_device_cc(i);
+        let arch = format!("compute_{}{}", maj, min);
+        println!("[GPU {}] CC {}.{} -> {}", i, maj, min, arch);
+        archs.push(arch);
+    }
+
+    // compile PTX once per unique arch
+    let mut ptx_by_arch: HashMap<String, cudarc::nvrtc::Ptx> = HashMap::new();
+    for arch in archs
+        .iter()
+        .cloned()
+        .collect::<std::collections::HashSet<_>>()
+    {
+        // Make a 'static str for CompileOptions.arch
+        let arch_static: &'static str = Box::leak(arch.clone().into_boxed_str());
+
+        let opts = cudarc::nvrtc::CompileOptions {
+            arch: Some(arch_static), // <- &'static str now
+            include_paths: vec!["/usr/local/cuda/include".into(), "/opt/cuda/include".into()],
+            ..Default::default()
+        };
+
+        println!("Compiling PTX for {} ...", arch);
+        let ptx = cudarc::nvrtc::compile_ptx_with_opts(PTX_SRC, opts).map_err(|e| {
+            eprintln!("NVRTC compile failed for {}: {e}", arch);
+            e
+        })?;
+
+        ptx_by_arch.insert(arch, ptx);
+    }
+    println!("PTX compiled for {} arch variant(s).", ptx_by_arch.len()); // ---------- enumerate devices ----------
     unsafe { cuInit(0) };
     let mut dev_count_i32: i32 = 0;
     unsafe {
@@ -152,11 +205,23 @@ fn main() -> Result<(), DriverError> {
             break;
         }
 
-        let ctx = CudaContext::new(dev_idx)?; // dev_idx is already usize
-        let stream = ctx.default_stream(); // ok: method exists on Arc<CudaContext>
-        let module = ctx.load_module(ptx.clone())?;
-        let f = module.load_function("solve_nonce_range_fused")?;
+        let dev_cc = get_device_cc(dev_idx as i32);
+        let arch = format!("compute_{}{}", dev_cc.0, dev_cc.1);
+        let ptx = ptx_by_arch
+            .get(&arch)
+            .expect("PTX for arch not found")
+            .clone();
 
+        let ctx = CudaContext::new(dev_idx)?; // Arc<CudaContext>
+        let stream = ctx.default_stream();
+
+        let module = ctx.load_module(ptx)?;
+        let f = module
+            .load_function("solve_nonce_range_fused")
+            .map_err(|e| {
+                eprintln!("[GPU {}] load_function failed: {e}", dev_idx);
+                e
+            })?;
         // device buffers
         let mut h_counter = [0u64; 1];
         let d_counter = stream.memcpy_stod(&h_counter)?;
