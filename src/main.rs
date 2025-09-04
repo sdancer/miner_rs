@@ -87,6 +87,15 @@ fn get_device_cc(ordinal: i32) -> (i32, i32) {
         (major, minor)
     }
 }
+
+fn dev_attr(dev: i32, attr: CUdevice_attribute) -> i32 {
+    let mut v = 0;
+    unsafe {
+        cuDeviceGetAttribute(&mut v, attr, dev);
+    }
+    v
+}
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     // ---------- host precompute ----------
     let seed = [0u8; 240];
@@ -189,6 +198,30 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // ---------- setup + launch per device ----------
     for dev_idx in 0..dev_count {
+        println!(
+            "[GPU {}] maxThreadsPerBlock={}",
+            dev_idx,
+            dev_attr(
+                dev_idx as i32,
+                CUdevice_attribute::CU_DEVICE_ATTRIBUTE_MAX_THREADS_PER_BLOCK
+            )
+        );
+        println!(
+            "[GPU {}] maxGridDimX={}",
+            dev_idx,
+            dev_attr(
+                dev_idx as i32,
+                CUdevice_attribute::CU_DEVICE_ATTRIBUTE_MAX_GRID_DIM_X
+            )
+        );
+        println!(
+            "[GPU {}] maxSharedMemPerBlockOptin={} B",
+            dev_idx,
+            dev_attr(
+                dev_idx as i32,
+                CUdevice_attribute::CU_DEVICE_ATTRIBUTE_MAX_SHARED_MEMORY_PER_BLOCK_OPTIN
+            )
+        );
         // per-device nonce slice
         let local_start = nonce_start_global + (dev_idx as u64) * (per as u64);
         // cap final device to not exceed total
