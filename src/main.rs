@@ -280,6 +280,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         let ela = dev_start.elapsed();
 
+        println!("{} ela: launched ", dev_idx);
+ 
         runs.push(DevRun {
             ctx,
             d_prefix,
@@ -293,6 +295,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         });
     }
 
+    println!("gathering results ");
+ 
     // ---------- gather results ----------
     let mut total_iters: u64 = 0;
     for (i, run) in runs.iter_mut().enumerate() {
