@@ -250,6 +250,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 eprintln!("[GPU {}] load_function failed: {e}", dev_idx);
                 e
             })?;
+        println!("{} loaded ", dev_idx);
         // device buffers
         let mut h_counter = [0u64; 1];
         let d_counter = stream.memcpy_stod(&h_counter)?;
@@ -269,7 +270,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         builder.arg(&local_count);
         builder.arg(&mut d_out);
 
+        println!("{} launching ", dev_idx);
+ 
         unsafe { builder.launch(cfg) }?;
+
+        println!("{} launched ", dev_idx);
+ 
         stream.synchronize()?;
 
         let ela = dev_start.elapsed();
