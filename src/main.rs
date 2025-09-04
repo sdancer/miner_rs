@@ -149,12 +149,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         ptx_by_arch.insert(arch, ptx);
     }
     println!("PTX compiled for {} arch variant(s).", ptx_by_arch.len()); // ---------- enumerate devices ----------
-    unsafe { cuInit(0) };
-    let mut dev_count_i32: i32 = 0;
-    unsafe {
-        // CUresult ignored here; if it fails dev_count_i32 stays 0
-        let _ = cuDeviceGetCount(&mut dev_count_i32 as *mut i32);
-    }
     let dev_count = (dev_count_i32.max(0)) as usize;
     if dev_count == 0 {
         eprintln!("No CUDA devices found.");
