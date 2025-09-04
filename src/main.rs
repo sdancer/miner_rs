@@ -300,9 +300,21 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // ---------- gather results ----------
     let mut total_iters: u64 = 0;
     for (i, run) in runs.iter_mut().enumerate() {
-        let stream = run.ctx.default_stream();
-        stream.memcpy_dtoh(&run.d_out, &mut run.out_host)?;
-        stream.memcpy_dtoh(&run.d_counter, &mut run.h_counter)?;
+    //let _ctx_guard = run.ctx.push_current()?; // or: run.ctx.push_current()?
+    let stream = run.ctx.default_stream();
+
+    // Sync and copy with context bound
+    stream.synchronize()?;
+    stream
+        .memcpy_dtoh(&run.d_out, &mut run.out_host)
+        .map_err(|e| anyhow::anyhow!("[GPU {i}] dtoh d_out failed: {e}"))?;
+    stream
+        .memcpy_dtoh(&run.d_counter, &mut run.h_counter)
+        .map_err(|e| anyhow::anyhow!("[GPU {i}] dtoh counter failed: {e}"))?;
+
+        println!(
+            "\n[GPU {}] did read",
+                    , dev_idx);
 
         total_iters += run.h_counter[0];
 
