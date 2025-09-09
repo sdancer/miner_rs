@@ -189,7 +189,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("Found {} CUDA device(s).", dev_count);
 
     // ---------- choose global work to split ----------
-    let total_nonce_count: i32 = 1_000_000; // same as your previous `nonce_count`
+    let total_nonce_count: i32 = 0x7fffffff; // same as your previous `nonce_count`
     let nonce_start_global: u64 = 0;
 
     // ceil-div to spread remainder
