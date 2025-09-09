@@ -441,7 +441,12 @@ fn drain_ring_once(run: &mut DevRun) -> anyhow::Result<Vec<u64>> {
         stream.memcpy_dtoh(
             &run.d_ring_flags.slice(seg_pos..seg_pos + seg_len),
             &mut run.h_flags_scratch[..seg_len],
-        )?;
+        ).
+           map_err(|e| {
+                eprintln!("[GPU ] load_function failed: {seg_pos} {seg_len} {e}");
+                e
+            })?;
+ 
 
         println!("copied");
 
