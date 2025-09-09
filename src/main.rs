@@ -355,7 +355,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let stream = run.ctx.default_stream();
             stream.memcpy_dtoh(&run.d_counter, &mut run.h_counter).ok();
             // Don’t spam; just maintain an aggregate
-            total_iters = total_iters.saturating_add(run.h_counter[0]);
+            total_iters = run.h_counter[0];
         }
 
         // Print any new solutions we got this tick
@@ -431,7 +431,7 @@ fn drain_ring_once(run: &mut DevRun) -> anyhow::Result<Vec<u64>> {
         .map_err(|e| anyhow::anyhow!("memcpy flags D2H failed: {e}"))?;
 
     let mut collected = Vec::new();
-    let zero = [0i32];          // reusable 1-element zero slice
+    let zero = [0i32]; // reusable 1-element zero slice
     let mut one_nonce = [0u64]; // reusable 1-element nonce buffer
 
     // 2) Scan flags; for each == 1, copy the nonce and clear the flag on device
@@ -439,10 +439,7 @@ fn drain_ring_once(run: &mut DevRun) -> anyhow::Result<Vec<u64>> {
         if h_flags[i] == 1 {
             // 2a) Read nonce i
             stream
-                .memcpy_dtoh(
-                    &run.d_ring_nonces.slice(i..i + 1),
-                    &mut one_nonce,
-                )
+                .memcpy_dtoh(&run.d_ring_nonces.slice(i..i + 1), &mut one_nonce)
                 .map_err(|e| anyhow::anyhow!("memcpy nonce[{i}] D2H failed: {e}"))?;
 
             collected.push(one_nonce[0]);
@@ -488,7 +485,7 @@ fn drain_ring_once(run: &mut DevRun) -> anyhow::Result<Vec<u64>> {
         let seg_len = remain.min(cap - (cursor % cap)) as usize;
 
         let mut h_flags_scratch = vec![0i32; 4096];
- 
+
         // 1) Copy flags segment
         stream.memcpy_dtoh(
             &run.d_ring_flags,
@@ -498,7 +495,7 @@ fn drain_ring_once(run: &mut DevRun) -> anyhow::Result<Vec<u64>> {
                 eprintln!("[GPU ] memcpy_dtoh failed: {seg_pos} {seg_len} {e}");
                 e
             })?;
- 
+
 
         // 2) Scan flags; for each FULL slot, copy corresponding nonce(s)
         let mut block_start = None::<usize>;
