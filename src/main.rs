@@ -349,7 +349,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Example: poll for ~5 seconds or until you decide to stop.
     let t0 = std::time::Instant::now();
-    let poll_for = std::time::Duration::from_secs(5);
+    let poll_for = std::time::Duration::from_secs(500);
 
     let mut total_iters: u64 = 0;
     let mut all_solutions: Vec<(usize, u64)> = Vec::new();
