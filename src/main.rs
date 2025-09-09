@@ -381,7 +381,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             break 'outer;
         }
 
-        println!("{:?}", total_iters / t0.elapsed().to_millis());
+        println!("{:?}", total_iters / t0.elapsed().as_millis() as u64);
  
         // light sleep to avoid hogging CPU
         std::thread::sleep(std::time::Duration::from_millis(100));
