@@ -272,7 +272,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         // build and launch
         let dev_start = std::time::Instant::now();
 
-        let ring_cap: usize = 1 << 16; // e.g., 65536 slots; tune as you like (solutions are rare)
+        let ring_cap: usize = 4096; // e.g., 65536 slots; tune as you like (solutions are rare)
         let zero_u64 = [0u64; 1];
 
         // Device allocations
@@ -437,13 +437,15 @@ fn drain_ring_once(run: &mut DevRun) -> anyhow::Result<Vec<u64>> {
         let seg_pos = (cursor % cap) as usize;
         let seg_len = remain.min(cap - (cursor % cap)) as usize;
 
+        let mut h_flags_scratch = vec![0i32; 4096];
+ 
         // 1) Copy flags segment
         stream.memcpy_dtoh(
-            &run.d_ring_flags.slice(seg_pos..seg_pos + seg_len),
-            &mut run.h_flags_scratch[..seg_len],
+            &run.d_ring_flags,
+            &mut h_flags_scratch,
         ).
            map_err(|e| {
-                eprintln!("[GPU ] load_function failed: {seg_pos} {seg_len} {e}");
+                eprintln!("[GPU ] memcpy_dtoh failed: {seg_pos} {seg_len} {e}");
                 e
             })?;
  
