@@ -384,7 +384,12 @@ void fused_blake3_hash_and_detect(
     const int32_t* __restrict__ d_C,       // 256 i32 (1024B) per item
     uint64_t*  __restrict__ d_found_nonce,      
     uint32_t*  __restrict__ d_found_u32_at_228,
-    uint64_t seed_n
+    uint64_t seed_n,
+
+    unsigned long long* __restrict__ ring_nonces, // u64[cap]
+    int                 ring_cap,                 // capacity
+    int*                ring_flags,               // i32[cap], 0=empty, 1=full
+    unsigned long long* __restrict__ ring_tail   // monotonically increasing reservation counter
 )
 {
     const int i = threadIdx.y;   // 0..15
@@ -547,7 +552,14 @@ void solve_nonce_range_fused(
         unsigned long long* d_iter_count,
         u64 nonce_start,
         int nonce_count,
-        u32* __restrict__ d_hashes /* (still unused; hashing kept commented) */)
+        u32* __restrict__ d_hashes,
+
+        // ring
+        unsigned long long* __restrict__ ring_nonces, // u64[cap]
+        int                 ring_cap,                 // capacity
+        int*                ring_flags,               // i32[cap], 0=empty, 1=full
+        unsigned long long* __restrict__ ring_tail   // monotonically increasing reservation counter
+        )
 {
     const int i = threadIdx.y;   // 0..15
     const int j = threadIdx.x;   // 0..15
@@ -718,7 +730,13 @@ void solve_nonce_range_fused(
                 tileC,
                 &d_found_nonce,
                 &d_found_u32_at_228,
-                seed
+                nonce_start + seed,
+
+        ring_nonces, // u64[cap]
+        ring_cap,                 // capacity
+        ring_flags,               // i32[cap], 0=empty, 1=full
+        ring_tail   // monotonically increasing reservation counter
+
                 );
     }
 }
