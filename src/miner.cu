@@ -531,7 +531,7 @@ void fused_blake3_hash_and_detect(
             while (atomicCAS(&ring_flags[pos], 0, -1) != 0) {
            }
 
-           ring_nonces[pos] = found;
+           ring_nonces[pos] = seed_n;
           
            // Make data visible system-wide before flagging FULL.
            __threadfence_system();
