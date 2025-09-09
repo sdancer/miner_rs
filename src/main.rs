@@ -450,8 +450,6 @@ fn drain_ring_once(run: &mut DevRun) -> anyhow::Result<Vec<u64>> {
             })?;
  
 
-        println!("copied");
-
         // 2) Scan flags; for each FULL slot, copy corresponding nonce(s)
         let mut block_start = None::<usize>;
         for i in 0..seg_len {
