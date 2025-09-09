@@ -99,6 +99,7 @@ fn dev_attr(dev: i32, attr: CUdevice_attribute) -> i32 {
 // ---------- per-device launch state ----------
 struct DevRun {
     ctx: Arc<CudaContext>,
+    stream_copy: Arc<cudarc::driver::CudaStream>,
     module: Arc<cudarc::driver::CudaModule>,
     d_prefix: cudarc::driver::CudaSlice<u8>,
     d_counter: cudarc::driver::CudaSlice<u64>,
@@ -316,8 +317,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         println!("{} ela: launched ", dev_idx);
 
+       let stream_copy = ctx.new_stream()?; // separate copy stream
+ 
         runs.push(DevRun {
             ctx,
+stream_copy,
             module,
             d_prefix,
             d_counter,
