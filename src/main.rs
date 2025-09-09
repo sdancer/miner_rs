@@ -443,6 +443,8 @@ fn drain_ring_once(run: &mut DevRun) -> anyhow::Result<Vec<u64>> {
         .memcpy_dtoh(&run.d_ring_flags, &mut h_flags)
         .map_err(|e| anyhow::anyhow!("memcpy flags D2H failed: {e}"))?;
 
+    println!("copied");
+ 
     let mut collected = Vec::new();
     let zero = [0i32]; // reusable 1-element zero slice
     let mut one_nonce = [0u64]; // reusable 1-element nonce buffer
