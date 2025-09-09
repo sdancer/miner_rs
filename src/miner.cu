@@ -569,7 +569,7 @@ void solve_nonce_range_fused(
         const uint8_t* __restrict__ d_prefix232, // 232 bytes
         unsigned long long* d_iter_count,
         u64 nonce_start,
-        int nonce_count,
+        u32 nonce_count,
         u32* __restrict__ d_hashes,
 
         // ring
@@ -608,7 +608,7 @@ void solve_nonce_range_fused(
     int32_t* Bs4 = reinterpret_cast<int32_t*>(smem + (size_t)16 * (TILE_K/4) * sizeof(int32_t) + 64);
 
     // Process many nonces with a single persistent block
-    for (int seed = blockIdx.x; seed < nonce_count; seed += gridDim.x) {
+    for (unsigned int seed = blockIdx.x; seed < nonce_count; seed += gridDim.x) {
 
         // Thread (0,0) builds the 240B seed and computes root/preCV/lastWords
         if (i == 0 && j == 0) {
