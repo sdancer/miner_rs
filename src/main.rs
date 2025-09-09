@@ -420,6 +420,56 @@ fn print_tensor_bytes_grid(bytes: &[u8]) {
 }
 
 fn drain_ring_once(run: &mut DevRun) -> anyhow::Result<Vec<u64>> {
+    //let stream = run.ctx.default_stream();
+    let stream = run.ctx.new_stream()?; // separate copy stream
+    let cap = run.ring_cap as usize;
+
+    // 1) Pull the entire flags array to host
+    let mut h_flags = vec![0i32; cap];
+    stream
+        .memcpy_dtoh(&run.d_ring_flags, &mut h_flags)
+        .map_err(|e| anyhow::anyhow!("memcpy flags D2H failed: {e}"))?;
+
+    let mut collected = Vec::new();
+    let zero = [0i32];          // reusable 1-element zero slice
+    let mut one_nonce = [0u64]; // reusable 1-element nonce buffer
+
+    // 2) Scan flags; for each == 1, copy the nonce and clear the flag on device
+    for i in 0..cap {
+        if h_flags[i] == 1 {
+            // 2a) Read nonce i
+            stream
+                .memcpy_dtoh(
+                    &run.d_ring_nonces.slice(i..i + 1),
+                    &mut one_nonce,
+                )
+                .map_err(|e| anyhow::anyhow!("memcpy nonce[{i}] D2H failed: {e}"))?;
+
+            collected.push(one_nonce[0]);
+
+            // 2b) Clear flag[i] back on device
+            let mut d_flag_i: cudarc::driver::CudaViewMut<i32> = run
+                .d_ring_flags
+                .try_slice_mut(i..i + 1)
+                .ok_or_else(|| anyhow::anyhow!("flag slice OOB at {i}"))?;
+
+            stream
+                .memcpy_htod(&zero, &mut d_flag_i)
+                .map_err(|e| anyhow::anyhow!("memcpy flag[{i}] H2D failed: {e}"))?;
+        }
+    }
+
+    // (Optional) keep a simple head accounting if you want it
+    // run.head_host = (run.head_host + collected.len() as u64) % run.ring_cap as u64;
+
+    // Ensure all H2D clears are done before returning
+    stream.synchronize()?;
+
+    Ok(collected)
+}
+
+/*
+fn drain_ring_once(run: &mut DevRun) -> anyhow::Result<Vec<u64>> {
     // We’ll inspect up to a window ahead of head_host
     let cap = run.ring_cap as u64;
     let head = run.head_host;
@@ -514,3 +564,4 @@ fn drain_ring_once(run: &mut DevRun) -> anyhow::Result<Vec<u64>> {
 
     Ok(collected)
 }
+*/
