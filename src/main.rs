@@ -363,7 +363,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
                 // replace bytes 232..240 with nonce_bytes
                 s1[232..240].copy_from_slice(&nonce_bytes);
-                let x = cpu_ref::calculate_matmul(&buf); // Vec<i32>
+                let x = cpu_ref::calculate_matmul(&s1); // Vec<i32>
                 // seed || matmul bytes → BLAKE3
                 let mut buf = Vec::with_capacity(s1.len() + x.len() * 4);
                 buf.extend_from_slice(&s1);
