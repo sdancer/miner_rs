@@ -190,14 +190,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     println!("Found {} CUDA device(s).", dev_count);
 
-    // ---------- choose global work to split ----------
-    let total_nonce_count: i32 = 0x7fffffff;
-    let nonce_start_global: u64 = 0;
-
-    // ceil-div to spread remainder
-    // let per_dev = |n: i32, k: usize| -> i32 { ((n as i64 + k as i64 - 1) / k as i64) as i32 };
-    // let per = per_dev(total_nonce_count, dev_count);
-
     let mut runs: Vec<DevRun> = Vec::with_capacity(dev_count);
 
     // ---------- setup + launch per device ----------
@@ -235,17 +227,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             shared_mem_bytes: (16 * 256 + 256 * 16) as u32,
         };
 
-        // per-device nonce slice
-        // let local_start = nonce_start_global + (dev_idx as u64) * (per as u64);
-        // cap final device to not exceed total
-        // let remaining = total_nonce_count.saturating_sub((dev_idx as i32) * per);
-        // let local_count = remaining.min(per).max(0);
-        // if local_count == 0 {
-        //     // no more work
-        //     break;
-        // }
-        //
-        let local_start: u64 = <usize as TryInto<u64>>::try_into(dev_idx).unwrap() * 0x1_00000000;
+        let local_start: u64 = <usize as TryInto<u64>>::try_into(dev_idx).unwrap() * 0x1000_00000000;
 
         let local_count = 0x7fffffff;
 
@@ -351,7 +333,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let t0 = std::time::Instant::now();
     let poll_for = std::time::Duration::from_secs(500);
 
-    let mut total_iters: u64 = 0;
+    let mut total_iters: u64;
     let mut all_solutions: Vec<(usize, u64)> = Vec::new();
 
     'outer: loop {
