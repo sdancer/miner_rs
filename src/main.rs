@@ -99,6 +99,7 @@ fn dev_attr(dev: i32, attr: CUdevice_attribute) -> i32 {
 // ---------- per-device launch state ----------
 struct DevRun {
     ctx: Arc<CudaContext>,
+    module: Arc<cudarc::driver::CudaModule>,
     d_prefix: cudarc::driver::CudaSlice<u8>,
     d_counter: cudarc::driver::CudaSlice<u64>,
     d_out: cudarc::driver::CudaSlice<i32>,
@@ -243,7 +244,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         //     break;
         // }
         //
-        let local_start : u64 = <usize as TryInto<u64>>::try_into(dev_idx).unwrap() * 0x1_00000000;
+        let local_start: u64 = <usize as TryInto<u64>>::try_into(dev_idx).unwrap() * 0x1_00000000;
 
         let local_count = 0x7fffffff;
 
@@ -317,6 +318,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         runs.push(DevRun {
             ctx,
+            module,  
             d_prefix,
             d_counter,
             d_out,
