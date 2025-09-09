@@ -440,6 +440,9 @@ fn drain_ring_once(run: &mut DevRun) -> anyhow::Result<Vec<u64>> {
     let zero = [0i32]; // reusable 1-element zero slice
     let mut one_nonce = [0u64]; // reusable 1-element nonce buffer
 
+ stream.synchronize()?;
+
+
     // 2) Scan flags; for each == 1, copy the nonce and clear the flag on device
     for i in 0..cap {
         if h_flags[i] == 1 {
