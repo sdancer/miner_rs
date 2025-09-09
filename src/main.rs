@@ -366,7 +366,7 @@ stream_copy,
             }
 
             // Optionally also check the iteration counter occasionally
-            let stream = run.ctx.default_stream();
+            let stream = &run.stream_copy;
             stream.memcpy_dtoh(&run.d_counter, &mut run.h_counter).ok();
             // Don’t spam; just maintain an aggregate
             total_iters = run.h_counter[0];
