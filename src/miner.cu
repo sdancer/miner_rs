@@ -520,6 +520,24 @@ void fused_blake3_hash_and_detect(
 
             const uint32_t* p228 = reinterpret_cast<const uint32_t*>(seed + 228);
             *d_found_u32_at_228 = *p228;
+
+
+            unsigned long long idx = atomicAdd(ring_tail, 1ULL);
+            int pos = (int)(idx % (unsigned long long)ring_cap);
+
+            // Backpressure / overwrite policy:
+            // Easiest robust policy is to wait until slot is empty (flag==0).
+            // If you prefer "never block" & allow loss, replace the spin with a try-then-drop.
+            while (atomicCAS(&ring_flags[pos], 0, -1) != 0) {
+           }
+
+           ring_nonces[pos] = found;
+          
+           // Make data visible system-wide before flagging FULL.
+           __threadfence_system();
+          
+           // Publish the slot as FULL
+           atomicExch(&ring_flags[pos], 1);
     }
 }
 
