@@ -356,10 +356,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         // Print any new solutions we got this tick
         if !all_solutions.is_empty() {
             for (gpu, nonce) in all_solutions.drain(..) {
-                let x = cpu_ref::calculate_matmul(&seed); // Vec<i32>
+                let mut s1 = seed.clone();
+
+                // write nonce (u64) as little endian
+                let nonce_bytes = nonce.to_le_bytes();
+
+                // replace bytes 232..240 with nonce_bytes
+                s1[232..240].copy_from_slice(&nonce_bytes);
+                let x = cpu_ref::calculate_matmul(&buf); // Vec<i32>
                 // seed || matmul bytes → BLAKE3
-                let mut buf = Vec::with_capacity(seed.len() + x.len() * 4);
-                buf.extend_from_slice(&seed);
+                let mut buf = Vec::with_capacity(s1.len() + x.len() * 4);
+                buf.extend_from_slice(&s1);
                 for v in &x {
                     buf.extend_from_slice(&v.to_le_bytes());
                 }
