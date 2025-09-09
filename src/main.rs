@@ -355,6 +355,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut all_solutions: Vec<(usize, u64)> = Vec::new();
 
     'outer: loop {
+        total_iters = 0;
         for (i, run) in runs.iter_mut().enumerate() {
             // Drain any available solutions from this device's ring
             let sols = drain_ring_once(run)?;
@@ -366,7 +367,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let stream = &run.stream_copy;
             stream.memcpy_dtoh(&run.d_counter, &mut run.h_counter).ok();
             // Don’t spam; just maintain an aggregate
-            total_iters = run.h_counter[0];
+            total_iters += run.h_counter[0];
         }
 
         // Print any new solutions we got this tick
