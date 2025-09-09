@@ -757,6 +757,7 @@ void solve_nonce_range_fused(
 
                 );
     }
+    printf("finished!\n");
 }
 
 
