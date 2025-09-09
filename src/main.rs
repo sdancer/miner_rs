@@ -318,12 +318,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         println!("{} ela: launched ", dev_idx);
 
- 
-std::mem::forget(f);
+        std::mem::forget(f);
 
         runs.push(DevRun {
             ctx,
-stream_copy,
+            stream_copy,
             module,
             d_prefix,
             d_counter,
@@ -437,16 +436,12 @@ fn drain_ring_once(run: &mut DevRun) -> anyhow::Result<Vec<u64>> {
     let stream = &run.stream_copy;
     let cap = run.ring_cap as usize;
 
-    println!("got stream");
- 
     // 1) Pull the entire flags array to host
     let mut h_flags = vec![0i32; cap];
     stream
         .memcpy_dtoh(&run.d_ring_flags, &mut h_flags)
         .map_err(|e| anyhow::anyhow!("memcpy flags D2H failed: {e}"))?;
 
-    println!("copied");
- 
     let mut collected = Vec::new();
     let zero = [0i32]; // reusable 1-element zero slice
     let mut one_nonce = [0u64]; // reusable 1-element nonce buffer
@@ -456,7 +451,6 @@ fn drain_ring_once(run: &mut DevRun) -> anyhow::Result<Vec<u64>> {
     // 2) Scan flags; for each == 1, copy the nonce and clear the flag on device
     for i in 0..cap {
         if h_flags[i] == 1 {
-            println!("h_flags[{i}]");
             // 2a) Read nonce i
             stream
                 .memcpy_dtoh(&run.d_ring_nonces.slice(i..i + 1), &mut one_nonce)
@@ -482,104 +476,5 @@ fn drain_ring_once(run: &mut DevRun) -> anyhow::Result<Vec<u64>> {
     // Ensure all H2D clears are done before returning
     stream.synchronize()?;
 
-    println!("leaving");
-     Ok(collected)
-}
-
-/*
-fn drain_ring_once(run: &mut DevRun) -> anyhow::Result<Vec<u64>> {
-    // We’ll inspect up to a window ahead of head_host
-    let cap = run.ring_cap as u64;
-    let head = run.head_host;
-    let window = run.h_flags_scratch.len() as u64;
-
-    // Map ring to a linear window [head .. head+window), wrapping mod cap.
-    // Handle wrap in two segments max.
-
-    let mut collected = Vec::new();
-    let stream = run.ctx.default_stream();
-
-    let mut remain = window.min(cap); // never look more than cap
-    let mut cursor = head;
-    while remain > 0 {
-        let seg_pos = (cursor % cap) as usize;
-        let seg_len = remain.min(cap - (cursor % cap)) as usize;
-
-        let mut h_flags_scratch = vec![0i32; 4096];
-
-        // 1) Copy flags segment
-        stream.memcpy_dtoh(
-            &run.d_ring_flags,
-            &mut h_flags_scratch,
-        ).
-           map_err(|e| {
-                eprintln!("[GPU ] memcpy_dtoh failed: {seg_pos} {seg_len} {e}");
-                e
-            })?;
-
-
-        // 2) Scan flags; for each FULL slot, copy corresponding nonce(s)
-        let mut block_start = None::<usize>;
-        for i in 0..seg_len {
-            if h_flags_scratch[i] == 1 {
-                if block_start.is_none() {
-                    block_start = Some(i);
-                }
-            } else if let Some(bs) = block_start.take() {
-                // flush block [bs..i)
-                let n = i - bs;
-                // copy n nonces in one go
-                stream.memcpy_dtoh(
-                    &run.d_ring_nonces.slice(seg_pos + bs..seg_pos + i),
-                    &mut run.h_nonces_scratch[..n],
-                )?;
-                // reset flags back to 0 (free slots)
-
-                // when clearing [seg_pos + bs .. seg_pos + i) with length n
-                for j in 0..n {
-                    let mut one: cudarc::driver::CudaViewMut<i32> = run
-                        .d_ring_flags
-                        .try_slice_mut(seg_pos + bs + j..seg_pos + bs + j + 1)
-                        .ok_or_else(|| anyhow::anyhow!("oob"))?;
-                    stream.memcpy_htod(&[0i32], &mut one)?;
-                }
-
-                // append to collected
-                collected.extend_from_slice(&run.h_nonces_scratch[..n]);
-
-                // advance head by n
-                run.head_host += n as u64;
-                cursor += n as u64;
-            }
-        }
-
-        // tail case: if a block ends at seg end
-        if let Some(bs) = block_start {
-            let n = seg_len - bs;
-            stream.memcpy_dtoh(
-                &run.d_ring_nonces.slice(seg_pos + bs..seg_pos + seg_len),
-                &mut run.h_nonces_scratch[..n],
-            )?;
-
-            let mut one: cudarc::driver::CudaViewMut<i32> = run
-                .d_ring_flags
-                .try_slice_mut(seg_pos + bs..seg_pos + seg_len)
-                .ok_or_else(|| anyhow::anyhow!("oob"))?;
-            stream.memcpy_htod(&vec![0; seg_len], &mut one)?;
-
-            collected.extend_from_slice(&run.h_nonces_scratch[..n]);
-            run.head_host += n as u64;
-            cursor += n as u64;
-        }
-
-        // Move window forward
-        let consumed = (cursor - head) as u64;
-        if consumed >= window {
-            break;
-        }
-        remain = window - consumed;
-    }
-
     Ok(collected)
 }
-*/
