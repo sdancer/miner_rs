@@ -293,11 +293,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         builder.arg(&local_count);
         builder.arg(&mut d_out);
 
-builder.arg(&d_ring_nonces);
-let ring_cap_i32 = ring_cap as i32;
-builder.arg(&ring_cap_i32);
-builder.arg(&d_ring_flags);
-builder.arg(&d_ring_tail);
+        builder.arg(&d_ring_nonces);
+        let ring_cap_i32 = ring_cap as i32;
+        builder.arg(&ring_cap_i32);
+        builder.arg(&d_ring_flags);
+        builder.arg(&d_ring_tail);
 
         println!("{} launching ", dev_idx);
 
@@ -442,6 +442,8 @@ fn drain_ring_once(run: &mut DevRun) -> anyhow::Result<Vec<u64>> {
             &run.d_ring_flags.slice(seg_pos..seg_pos + seg_len),
             &mut run.h_flags_scratch[..seg_len],
         )?;
+
+        println!("copied");
 
         // 2) Scan flags; for each FULL slot, copy corresponding nonce(s)
         let mut block_start = None::<usize>;
