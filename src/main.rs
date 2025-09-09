@@ -355,7 +355,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut all_solutions: Vec<(usize, u64)> = Vec::new();
 
     'outer: loop {
-
         for (i, run) in runs.iter_mut().enumerate() {
             // Drain any available solutions from this device's ring
             let sols = drain_ring_once(run)?;
