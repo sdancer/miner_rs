@@ -480,9 +480,10 @@ fn drain_ring_once(run: &mut DevRun) -> anyhow::Result<Vec<u64>> {
     // run.head_host = (run.head_host + collected.len() as u64) % run.ring_cap as u64;
 
     // Ensure all H2D clears are done before returning
-    // stream.synchronize()?;
+    stream.synchronize()?;
 
-    Ok(collected)
+    println!("leaving");
+     Ok(collected)
 }
 
 /*
