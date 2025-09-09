@@ -242,6 +242,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         //     // no more work
         //     break;
         // }
+        //
+        let local_start : u64 = <usize as TryInto<u64>>::try_into(dev_idx).unwrap() * 0x1_00000000;
+
+        let local_count = 0x7fffffff;
 
         let dev_cc = get_device_cc(dev_idx as i32);
         let arch = format!("compute_{}{}", dev_cc.0, dev_cc.1);
@@ -289,8 +293,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         // solve_nonce_range_fused(d_prefix232, d_counter, nonce_start, nonce_count, d_C)
         builder.arg(&d_prefix);
         builder.arg(&d_counter);
-        builder.arg(&0);
-        builder.arg(&0x7fffffff);
+        builder.arg(&local_start);
+        builder.arg(&local_count);
         builder.arg(&mut d_out);
 
         builder.arg(&d_ring_nonces);
