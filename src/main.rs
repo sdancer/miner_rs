@@ -227,7 +227,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             shared_mem_bytes: (16 * 256 + 256 * 16) as u32,
         };
 
-        let local_start: u64 = <usize as TryInto<u64>>::try_into(dev_idx).unwrap() * 0x1000_00000000;
+        let local_start: u64 =
+            <usize as TryInto<u64>>::try_into(dev_idx).unwrap() * 0x1000_00000000;
 
         let local_count = 0x7fffffff;
 
@@ -355,12 +356,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         // Print any new solutions we got this tick
         if !all_solutions.is_empty() {
             for (gpu, nonce) in all_solutions.drain(..) {
-
                 let x = cpu_ref::calculate_matmul(&seed); // Vec<i32>
- 
-                println!("[GPU {}] SOLUTION nonce=0x{:016x}", gpu, nonce);
-                println!("[check {:?}] ", x);
+                // seed || matmul bytes → BLAKE3
+                let mut buf = Vec::with_capacity(seed.len() + x.len() * 4);
+                buf.extend_from_slice(&seed);
+                for v in &x {
+                    buf.extend_from_slice(&v.to_le_bytes());
+                }
+                let h = blake3::hash(&buf);
 
+                println!("[GPU {}] SOLUTION nonce=0x{:016x}", gpu, nonce);
+                println!("seed||matmul BLAKE3 = {}", h.to_hex());
             }
         }
 
