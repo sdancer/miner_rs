@@ -319,6 +319,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
        let stream_copy = ctx.new_stream()?; // separate copy stream
  
+std::mem::forget(f);
+
         runs.push(DevRun {
             ctx,
 stream_copy,
