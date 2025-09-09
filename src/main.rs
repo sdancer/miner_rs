@@ -293,6 +293,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         builder.arg(&local_count);
         builder.arg(&mut d_out);
 
+builder.arg(&d_ring_nonces);
+let ring_cap_i32 = ring_cap as i32;
+builder.arg(&ring_cap_i32);
+builder.arg(&d_ring_flags);
+builder.arg(&d_ring_tail);
+
         println!("{} launching ", dev_idx);
 
         unsafe { builder.launch(cfg) }?;
