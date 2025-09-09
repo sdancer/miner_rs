@@ -96,11 +96,34 @@ fn dev_attr(dev: i32, attr: CUdevice_attribute) -> i32 {
     v
 }
 
+// ---------- per-device launch state ----------
+struct DevRun {
+    ctx: Arc<CudaContext>,
+    d_prefix: cudarc::driver::CudaSlice<u8>,
+    d_counter: cudarc::driver::CudaSlice<u64>,
+    d_out: cudarc::driver::CudaSlice<i32>,
+    out_host: [i32; 256],
+    h_counter: [u64; 1],
+    nonce_start: u64,
+    nonce_count: i32,
+    ela: Option<std::time::Duration>,
+
+    // --- new ring fields ---
+    ring_cap: usize,
+    d_ring_nonces: cudarc::driver::CudaSlice<u64>, // capacity ring_cap
+    d_ring_flags: cudarc::driver::CudaSlice<i32>,  // 0 empty, 1 full
+    d_ring_tail: cudarc::driver::CudaSlice<u64>,   // single u64
+    d_ring_dropped: cudarc::driver::CudaSlice<u64>, // single u64 (optional)
+    h_flags_scratch: Vec<i32>,                     // host scratch to check a window of flags
+    h_nonces_scratch: Vec<u64>,                    // host scratch to copy out a window of nonces
+    head_host: u64,                                // we keep consumer head only on host
+}
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     // ---------- host precompute ----------
     let seed = [0u8; 240];
 
-    let start = std::time::Instant::now();
+    // let start = std::time::Instant::now();
     // (Optional) keep your CPU matmul + hash preview
     {
         let x = cpu_ref::calculate_matmul(&seed); // Vec<i32>
@@ -173,19 +196,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let per_dev = |n: i32, k: usize| -> i32 { ((n as i64 + k as i64 - 1) / k as i64) as i32 };
     let per = per_dev(total_nonce_count, dev_count);
 
-    // ---------- per-device launch state ----------
-    struct DevRun {
-        ctx: Arc<CudaContext>,
-        d_prefix: cudarc::driver::CudaSlice<u8>,
-        d_counter: cudarc::driver::CudaSlice<u64>,
-        d_out: cudarc::driver::CudaSlice<i32>,
-        out_host: [i32; 256],
-        h_counter: [u64; 1],
-        nonce_start: u64,
-        nonce_count: i32,
-        ela: Option<std::time::Duration>,
-    }
-
     let mut runs: Vec<DevRun> = Vec::with_capacity(dev_count);
 
     // ---------- setup + launch per device ----------
@@ -252,15 +262,28 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             })?;
         println!("{} loaded ", dev_idx);
         // device buffers
-        let mut h_counter = [0u64; 1];
+        let h_counter = [0u64; 1];
         let d_counter = stream.memcpy_stod(&h_counter)?;
         let prefix_host = seed; // 240B; kernel expects [0..232) common + 8B nonce appended
         let d_prefix = stream.memcpy_stod(&prefix_host)?;
-        let mut out_host = [0i32; 256];
+        let out_host = [0i32; 256];
         let mut d_out = stream.memcpy_stod(&out_host)?;
 
         // build and launch
         let dev_start = std::time::Instant::now();
+
+        let ring_cap: usize = 1 << 16; // e.g., 65536 slots; tune as you like (solutions are rare)
+        let zero_u64 = [0u64; 1];
+
+        // Device allocations
+        let d_ring_nonces = stream.alloc_zeros::<u64>(ring_cap)?;
+        let d_ring_flags = stream.alloc_zeros::<i32>(ring_cap)?;
+        let d_ring_tail = stream.memcpy_stod(&zero_u64)?; // start at 0
+        let d_ring_dropped = stream.memcpy_stod(&zero_u64)?; // optional
+
+        // Host scratch
+        let h_flags_scratch = vec![0i32; 4096]; // small probe window
+        let h_nonces_scratch = vec![0u64; 4096];
 
         let mut builder = stream.launch_builder(&f);
         // solve_nonce_range_fused(d_prefix232, d_counter, nonce_start, nonce_count, d_C)
@@ -276,7 +299,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         println!("{} launched ", dev_idx);
 
-        stream.synchronize()?;
+        // stream.synchronize()?;
 
         let ela = dev_start.elapsed();
 
@@ -292,42 +315,56 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             nonce_start: local_start,
             nonce_count: local_count,
             ela: Some(ela),
+
+            ring_cap,
+            d_ring_nonces,
+            d_ring_flags,
+            d_ring_tail,
+            d_ring_dropped,
+            h_flags_scratch,
+            h_nonces_scratch,
+            head_host: 0,
         });
     }
 
-    println!("gathering results ");
-
     // ---------- gather results ----------
+    println!("gathering results (non-blocking drain)");
+
+    // Example: poll for ~5 seconds or until you decide to stop.
+    let t0 = std::time::Instant::now();
+    let poll_for = std::time::Duration::from_secs(5);
+
     let mut total_iters: u64 = 0;
-    for (i, run) in runs.iter_mut().enumerate() {
-        //let _ctx_guard = run.ctx.push_current()?; // or: run.ctx.push_current()?
-        let stream = run.ctx.default_stream();
+    let mut all_solutions: Vec<(usize, u64)> = Vec::new();
 
-        // Sync and copy with context bound
-        stream.synchronize()?;
-        stream
-            .memcpy_dtoh(&run.d_out, &mut run.out_host)
-            .map_err(|e| anyhow::anyhow!("[GPU {i}] dtoh d_out failed: {e}"))?;
-        stream
-            .memcpy_dtoh(&run.d_counter, &mut run.h_counter)
-            .map_err(|e| anyhow::anyhow!("[GPU {i}] dtoh counter failed: {e}"))?;
+    'outer: loop {
+        for (i, run) in runs.iter_mut().enumerate() {
+            // Drain any available solutions from this device's ring
+            let sols = drain_ring_once(run)?;
+            for nonce in sols {
+                all_solutions.push((i, nonce));
+            }
 
-        println!("\n[GPU {i}] did read");
+            // Optionally also check the iteration counter occasionally
+            let stream = run.ctx.default_stream();
+            stream.memcpy_dtoh(&run.d_counter, &mut run.h_counter).ok();
+            // Don’t spam; just maintain an aggregate
+            total_iters = total_iters.saturating_add(run.h_counter[0]);
+        }
 
-        total_iters += run.h_counter[0];
+        // Print any new solutions we got this tick
+        if !all_solutions.is_empty() {
+            for (gpu, nonce) in all_solutions.drain(..) {
+                println!("[GPU {}] SOLUTION nonce=0x{:016x}", gpu, nonce);
+            }
+        }
 
-        // pretty print small preview to avoid spam
-        let bytes = map_to_binary_host(&run.out_host);
+        if t0.elapsed() > poll_for {
+            break 'outer;
+        }
 
-        println!(
-            "\n[GPU {}] nonce_start={}, nonce_count={}, elapsed={:?}",
-            i,
-            run.nonce_start,
-            run.nonce_count,
-            run.ela.unwrap()
-        );
-        print_tensor_bytes_grid_head(&bytes, 2);
-        println!("[GPU {}] iterations = {}", i, run.h_counter[0]);
+        // light sleep to avoid hogging CPU
+        std::thread::sleep(std::time::Duration::from_millis(100));
     }
 
     println!("\nAll devices done. Total iterations = {}", total_iters);
@@ -374,4 +411,93 @@ fn print_tensor_bytes_grid(bytes: &[u8]) {
         }
         println!();
     }
+}
+
+fn drain_ring_once(run: &mut DevRun) -> anyhow::Result<Vec<u64>> {
+    // We’ll inspect up to a window ahead of head_host
+    let cap = run.ring_cap as u64;
+    let head = run.head_host;
+    let window = run.h_flags_scratch.len() as u64;
+
+    // Map ring to a linear window [head .. head+window), wrapping mod cap.
+    // Handle wrap in two segments max.
+
+    let mut collected = Vec::new();
+    let stream = run.ctx.default_stream();
+
+    let mut remain = window.min(cap); // never look more than cap
+    let mut cursor = head;
+    while remain > 0 {
+        let seg_pos = (cursor % cap) as usize;
+        let seg_len = remain.min(cap - (cursor % cap)) as usize;
+
+        // 1) Copy flags segment
+        stream.memcpy_dtoh(
+            &run.d_ring_flags.slice(seg_pos..seg_pos + seg_len),
+            &mut run.h_flags_scratch[..seg_len],
+        )?;
+
+        // 2) Scan flags; for each FULL slot, copy corresponding nonce(s)
+        let mut block_start = None::<usize>;
+        for i in 0..seg_len {
+            if run.h_flags_scratch[i] == 1 {
+                if block_start.is_none() {
+                    block_start = Some(i);
+                }
+            } else if let Some(bs) = block_start.take() {
+                // flush block [bs..i)
+                let n = i - bs;
+                // copy n nonces in one go
+                stream.memcpy_dtoh(
+                    &run.d_ring_nonces.slice(seg_pos + bs..seg_pos + i),
+                    &mut run.h_nonces_scratch[..n],
+                )?;
+                // reset flags back to 0 (free slots)
+
+                // when clearing [seg_pos + bs .. seg_pos + i) with length n
+                for j in 0..n {
+                    let mut one: cudarc::driver::CudaViewMut<i32> = run
+                        .d_ring_flags
+                        .try_slice_mut(seg_pos + bs + j..seg_pos + bs + j + 1)
+                        .ok_or_else(|| anyhow::anyhow!("oob"))?;
+                    stream.memcpy_htod(&[0i32], &mut one)?;
+                }
+
+                // append to collected
+                collected.extend_from_slice(&run.h_nonces_scratch[..n]);
+
+                // advance head by n
+                run.head_host += n as u64;
+                cursor += n as u64;
+            }
+        }
+
+        // tail case: if a block ends at seg end
+        if let Some(bs) = block_start {
+            let n = seg_len - bs;
+            stream.memcpy_dtoh(
+                &run.d_ring_nonces.slice(seg_pos + bs..seg_pos + seg_len),
+                &mut run.h_nonces_scratch[..n],
+            )?;
+
+            let mut one: cudarc::driver::CudaViewMut<i32> = run
+                .d_ring_flags
+                .try_slice_mut(seg_pos + bs..seg_pos + seg_len)
+                .ok_or_else(|| anyhow::anyhow!("oob"))?;
+            stream.memcpy_htod(&vec![0; seg_len], &mut one)?;
+
+            collected.extend_from_slice(&run.h_nonces_scratch[..n]);
+            run.head_host += n as u64;
+            cursor += n as u64;
+        }
+
+        // Move window forward
+        let consumed = (cursor - head) as u64;
+        if consumed >= window {
+            break;
+        }
+        remain = window - consumed;
+    }
+
+    Ok(collected)
 }
