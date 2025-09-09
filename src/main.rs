@@ -355,7 +355,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         // Print any new solutions we got this tick
         if !all_solutions.is_empty() {
             for (gpu, nonce) in all_solutions.drain(..) {
+
+                let x = cpu_ref::calculate_matmul(&seed); // Vec<i32>
+ 
                 println!("[GPU {}] SOLUTION nonce=0x{:016x}", gpu, nonce);
+                println!("[check {:?}] ", x);
+
             }
         }
 
