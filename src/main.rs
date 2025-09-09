@@ -258,6 +258,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         let ctx = CudaContext::new(dev_idx)?; // Arc<CudaContext>
         let stream = ctx.default_stream();
+        let stream_copy = ctx.new_stream()?; // separate copy stream
 
         let module = ctx.load_module(ptx)?;
         let f = module
@@ -317,7 +318,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         println!("{} ela: launched ", dev_idx);
 
-       let stream_copy = ctx.new_stream()?; // separate copy stream
  
 std::mem::forget(f);
 
