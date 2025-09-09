@@ -432,8 +432,7 @@ fn print_tensor_bytes_grid(bytes: &[u8]) {
 }
 
 fn drain_ring_once(run: &mut DevRun) -> anyhow::Result<Vec<u64>> {
-    //let stream = run.ctx.default_stream();
-    let stream = run.ctx.default_stream(); // separate copy stream
+    let stream = &run.stream_copy;
     let cap = run.ring_cap as usize;
 
     println!("got stream");
