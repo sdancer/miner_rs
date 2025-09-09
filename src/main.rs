@@ -380,14 +380,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         if t0.elapsed() > poll_for {
             break 'outer;
         }
- 
-        let el = t0.elapsed().as_millis();
-        if el > 0 {
-        println!("{:?}", total_iters / el as u64);
-        }
- 
+
         // light sleep to avoid hogging CPU
         std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+    let el = t0.elapsed().as_millis();
+    if el > 0 {
+        println!("hashes/sec {:?}", total_iters / el as u64);
     }
 
     println!("\nAll devices done. Total iterations = {}", total_iters);
