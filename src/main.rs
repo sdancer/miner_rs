@@ -443,6 +443,7 @@ fn drain_ring_once(run: &mut DevRun) -> anyhow::Result<Vec<u64>> {
     // 2) Scan flags; for each == 1, copy the nonce and clear the flag on device
     for i in 0..cap {
         if h_flags[i] == 1 {
+            println!("h_flags[{i}]");
             // 2a) Read nonce i
             stream
                 .memcpy_dtoh(&run.d_ring_nonces.slice(i..i + 1), &mut one_nonce)
