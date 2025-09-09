@@ -189,12 +189,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("Found {} CUDA device(s).", dev_count);
 
     // ---------- choose global work to split ----------
-    let total_nonce_count: i32 = 0x7fffffff; // same as your previous `nonce_count`
+    let total_nonce_count: i32 = 0x7fffffff;
     let nonce_start_global: u64 = 0;
 
     // ceil-div to spread remainder
-    let per_dev = |n: i32, k: usize| -> i32 { ((n as i64 + k as i64 - 1) / k as i64) as i32 };
-    let per = per_dev(total_nonce_count, dev_count);
+    // let per_dev = |n: i32, k: usize| -> i32 { ((n as i64 + k as i64 - 1) / k as i64) as i32 };
+    // let per = per_dev(total_nonce_count, dev_count);
 
     let mut runs: Vec<DevRun> = Vec::with_capacity(dev_count);
 
@@ -234,14 +234,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         };
 
         // per-device nonce slice
-        let local_start = nonce_start_global + (dev_idx as u64) * (per as u64);
+        // let local_start = nonce_start_global + (dev_idx as u64) * (per as u64);
         // cap final device to not exceed total
-        let remaining = total_nonce_count.saturating_sub((dev_idx as i32) * per);
-        let local_count = remaining.min(per).max(0);
-        if local_count == 0 {
-            // no more work
-            break;
-        }
+        // let remaining = total_nonce_count.saturating_sub((dev_idx as i32) * per);
+        // let local_count = remaining.min(per).max(0);
+        // if local_count == 0 {
+        //     // no more work
+        //     break;
+        // }
 
         let dev_cc = get_device_cc(dev_idx as i32);
         let arch = format!("compute_{}{}", dev_cc.0, dev_cc.1);
@@ -289,8 +289,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         // solve_nonce_range_fused(d_prefix232, d_counter, nonce_start, nonce_count, d_C)
         builder.arg(&d_prefix);
         builder.arg(&d_counter);
-        builder.arg(&local_start);
-        builder.arg(&local_count);
+        builder.arg(&0);
+        builder.arg(&0x7fffffff);
         builder.arg(&mut d_out);
 
         builder.arg(&d_ring_nonces);
