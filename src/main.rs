@@ -318,7 +318,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         runs.push(DevRun {
             ctx,
-            module,  
+            module,
             d_prefix,
             d_counter,
             d_out,
@@ -351,7 +351,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     'outer: loop {
         println!("tick ");
- 
+
         for (i, run) in runs.iter_mut().enumerate() {
             // Drain any available solutions from this device's ring
             let sols = drain_ring_once(run)?;
@@ -432,6 +432,8 @@ fn drain_ring_once(run: &mut DevRun) -> anyhow::Result<Vec<u64>> {
     let stream = run.ctx.new_stream()?; // separate copy stream
     let cap = run.ring_cap as usize;
 
+    println!("got stream");
+ 
     // 1) Pull the entire flags array to host
     let mut h_flags = vec![0i32; cap];
     stream
@@ -442,8 +444,7 @@ fn drain_ring_once(run: &mut DevRun) -> anyhow::Result<Vec<u64>> {
     let zero = [0i32]; // reusable 1-element zero slice
     let mut one_nonce = [0u64]; // reusable 1-element nonce buffer
 
- stream.synchronize()?;
-
+    //stream.synchronize()?;
 
     // 2) Scan flags; for each == 1, copy the nonce and clear the flag on device
     for i in 0..cap {
